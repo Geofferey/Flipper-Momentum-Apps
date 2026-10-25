@@ -204,6 +204,9 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     app->filter.show_binary = true;
     app->filter.capcode_filter = PCSGCapcodeFilterOff;
     app->filter.hide_duplicates = true;
+    // Received messages are third-party traffic: keep nothing on SD unless
+    // the user chooses Save.
+    app->filter.log_temp = true;
     pcsg_settings_load(app);
 
     app->txrx->history = pcsg_history_alloc();
