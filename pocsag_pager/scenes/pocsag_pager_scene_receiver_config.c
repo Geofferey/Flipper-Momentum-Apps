@@ -8,6 +8,7 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFlexBinary,
     PCSGSettingIndexFlexDups,
     PCSGSettingIndexFlexEncrypted,
+    PCSGSettingIndexLogging,
     PCSGSettingIndexCapcodeFilter,
     PCSGSettingIndexCapcodeMin,
     PCSGSettingIndexCapcodeMax,
@@ -31,6 +32,12 @@ const char* const flex_binary_text[FLEX_BINARY_COUNT] = {
 const char* const flex_dups_text[FLEX_DUPS_COUNT] = {
     "Hide",
     "Show",
+};
+
+#define LOGGING_COUNT 2
+const char* const logging_text[LOGGING_COUNT] = {
+    "Save",
+    "Temp",
 };
 
 const char* const capcode_filter_text[PCSGCapcodeFilterCount] = {
@@ -217,6 +224,14 @@ static void pocsag_pager_scene_receiver_config_set_flex_encrypted(VariableItem* 
     app->filter.hide_encrypted = index == 0;
 }
 
+// Applies from the next receive session.
+static void pocsag_pager_scene_receiver_config_set_logging(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, logging_text[index]);
+    app->filter.log_temp = index == 1;
+}
+
 static void pocsag_pager_scene_receiver_config_set_capcode_filter(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -328,6 +343,16 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     value_index = app->filter.hide_encrypted ? 0 : 1;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, flex_dups_text[value_index]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Logging:",
+        LOGGING_COUNT,
+        pocsag_pager_scene_receiver_config_set_logging,
+        app);
+    value_index = app->filter.log_temp ? 1 : 0;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, logging_text[value_index]);
 
     item = variable_item_list_add(
         app->variable_item_list,

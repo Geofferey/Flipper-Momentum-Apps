@@ -30,6 +30,8 @@ typedef struct {
     uint32_t capcode_max;
     bool hide_duplicates;
     bool hide_encrypted;
+    // Log to one temp file destroyed on exit instead of a kept log per session.
+    bool log_temp;
 } PCSGFilterSettings;
 
 typedef struct POCSAGPagerApp POCSAGPagerApp;

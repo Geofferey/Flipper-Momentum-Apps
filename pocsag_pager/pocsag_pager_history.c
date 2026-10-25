@@ -47,6 +47,9 @@ struct PCSGHistory {
     File* file;
     bool file_open;
     uint32_t file_size;
+    // Temp mode: one hidden file, overwritten each session and destroyed on
+    // exit, instead of a kept log per session.
+    bool temp_mode;
 
     FlipperFormat* scratch;
     FuriString* protocol;
@@ -77,23 +80,56 @@ static void pcsg_history_close_log(PCSGHistory* instance) {
     }
 }
 
-static bool pcsg_history_open_log(PCSGHistory* instance) {
+/*
+ * Overwrite the temp session file with zeros, then delete it. Best effort:
+ * the SD card's wear levelling may still keep old copies of the data.
+ */
+static void pcsg_history_destroy_temp(Storage* storage) {
+    if(!storage_file_exists(storage, PCSG_HISTORY_TEMP_PATH)) return;
+    File* file = storage_file_alloc(storage);
+    if(storage_file_open(file, PCSG_HISTORY_TEMP_PATH, FSAM_WRITE, FSOM_OPEN_EXISTING)) {
+        uint64_t remaining = storage_file_size(file);
+        uint8_t zeros[64] = {0};
+        while(remaining) {
+            const size_t chunk = remaining < sizeof(zeros) ? remaining : sizeof(zeros);
+            if(storage_file_write(file, zeros, chunk) != chunk) break;
+            remaining -= chunk;
+        }
+        storage_file_sync(file);
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+    if(!storage_simply_remove(storage, PCSG_HISTORY_TEMP_PATH)) {
+        FURI_LOG_E(TAG, "Unable to remove %s", PCSG_HISTORY_TEMP_PATH);
+    }
+}
+
+static bool pcsg_history_open_log(PCSGHistory* instance, uint32_t frequency) {
     if(instance->file_open) return true;
 
-    DateTime datetime;
-    furi_hal_rtc_get_datetime(&datetime);
-    FuriString* path = furi_string_alloc_printf(
-        "%s/%04u-%02u-%02u_%02u-%02u-%02u" PCSG_HISTORY_LOG_EXT,
-        PCSG_HISTORY_LOG_DIR,
-        datetime.year,
-        datetime.month,
-        datetime.day,
-        datetime.hour,
-        datetime.minute,
-        datetime.second);
-
     storage_simply_mkdir(instance->storage, EXT_PATH("pocsag"));
-    storage_simply_mkdir(instance->storage, PCSG_HISTORY_LOG_DIR);
+    FuriString* path;
+    if(instance->temp_mode) {
+        // Wipe the previous session's file rather than only truncating it.
+        pcsg_history_destroy_temp(instance->storage);
+        path = furi_string_alloc_set_str(PCSG_HISTORY_TEMP_PATH);
+    } else {
+        // Session start time and frequency, e.g. 2026-10-25_04-48-13_929.6125.txt
+        DateTime datetime;
+        furi_hal_rtc_get_datetime(&datetime);
+        path = furi_string_alloc_printf(
+            "%s/%04u-%02u-%02u_%02u-%02u-%02u_%lu.%04lu" PCSG_HISTORY_LOG_EXT,
+            PCSG_HISTORY_LOG_DIR,
+            datetime.year,
+            datetime.month,
+            datetime.day,
+            datetime.hour,
+            datetime.minute,
+            datetime.second,
+            frequency / 1000000U,
+            (frequency % 1000000U) / 100U);
+        storage_simply_mkdir(instance->storage, PCSG_HISTORY_LOG_DIR);
+    }
     instance->file_open = storage_file_open(
         instance->file, furi_string_get_cstr(path), FSAM_READ_WRITE, FSOM_CREATE_ALWAYS);
     if(instance->file_open) {
@@ -156,6 +192,8 @@ PCSGHistory* pcsg_history_alloc(void) {
     PCSGHistory* instance = calloc(1, sizeof(PCSGHistory));
     instance->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     instance->storage = furi_record_open(RECORD_STORAGE);
+    // A temp file left by a crash or power loss is destroyed at the next start.
+    pcsg_history_destroy_temp(instance->storage);
     instance->file = storage_file_alloc(instance->storage);
     instance->scratch = flipper_format_string_alloc();
     instance->protocol = furi_string_alloc();
@@ -168,6 +206,7 @@ PCSGHistory* pcsg_history_alloc(void) {
 void pcsg_history_free(PCSGHistory* instance) {
     furi_assert(instance);
     pcsg_history_close_log(instance);
+    pcsg_history_destroy_temp(instance->storage);
     pcsg_history_free_blocks(instance);
     storage_file_free(instance->file);
     furi_record_close(RECORD_STORAGE);
@@ -178,6 +217,11 @@ void pcsg_history_free(PCSGHistory* instance) {
     furi_string_free(instance->line);
     furi_mutex_free(instance->mutex);
     free(instance);
+}
+
+void pcsg_history_set_temp_mode(PCSGHistory* instance, bool temp) {
+    furi_assert(instance);
+    instance->temp_mode = temp;
 }
 
 void pcsg_history_reset(PCSGHistory* instance) {
@@ -300,7 +344,10 @@ PCSGHistoryStateAddKey
 
     PCSGHistoryStateAddKey state = PCSGHistoryStateAddKeyUnknown;
     do {
-        if(length > PCSG_HISTORY_MAX_LINE || !pcsg_history_open_log(instance)) break;
+        if(length > PCSG_HISTORY_MAX_LINE ||
+           !pcsg_history_open_log(instance, preset->frequency)) {
+            break;
+        }
         furi_string_push_back(instance->line, '\n');
         if(!storage_file_seek(instance->file, instance->file_size, true) ||
            storage_file_write(

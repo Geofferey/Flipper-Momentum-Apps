@@ -116,6 +116,9 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "FlexEncrypted", &value, 1)) {
             filter->hide_encrypted = value == 0;
         }
+        if(flipper_format_read_uint32(file, "LogTemp", &value, 1)) {
+            filter->log_temp = value != 0;
+        }
     } while(false);
 
     furi_string_free(text);
@@ -155,6 +158,8 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "FlexDups", &value, 1)) break;
         value = !filter->hide_encrypted;
         if(!flipper_format_write_uint32(file, "FlexEncrypted", &value, 1)) break;
+        value = filter->log_temp;
+        if(!flipper_format_write_uint32(file, "LogTemp", &value, 1)) break;
         saved = true;
     } while(false);
 

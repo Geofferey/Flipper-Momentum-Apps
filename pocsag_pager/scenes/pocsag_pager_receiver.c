@@ -121,6 +121,7 @@ void pocsag_pager_scene_receiver_on_enter(void* context) {
     // (and restored from settings at startup).
     if(app->txrx->rx_key_state == PCSGRxKeyStateIDLE) {
         pcsg_history_reset(app->txrx->history);
+        pcsg_history_set_temp_mode(app->txrx->history, app->filter.log_temp);
         app->txrx->rx_key_state = PCSGRxKeyStateStart;
     }
 

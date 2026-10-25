@@ -13,6 +13,8 @@
 /** Where receive sessions are logged, one file per session. */
 #define PCSG_HISTORY_LOG_DIR    EXT_PATH("pocsag/logs")
 #define PCSG_HISTORY_LOG_EXT    ".txt"
+/** Single session file used instead in temp mode, outside the logs folder. */
+#define PCSG_HISTORY_TEMP_PATH  EXT_PATH("pocsag/.session.tmp")
 #define PCSG_HISTORY_LABEL_SIZE 40U
 /** Longest log line written or read; fits the longest escaped header and message. */
 #define PCSG_HISTORY_MAX_LINE   3072U
@@ -58,6 +60,13 @@ PCSGHistory* pcsg_history_alloc(void);
  * @param instance - PCSGHistory instance
  */
 void pcsg_history_free(PCSGHistory* instance);
+
+/**
+ * Choose where the next session is logged: a kept, dated log per session, or
+ * (temp) one hidden file overwritten each session and destroyed when the
+ * history is freed. Takes effect when the next log file is opened.
+ */
+void pcsg_history_set_temp_mode(PCSGHistory* instance, bool temp);
 
 /** Clear history and end the current log file; the next message starts a new one.
  *
