@@ -22,6 +22,13 @@ typedef struct {
     uint32_t pages_parse_failed;
     /** Alphanumeric pages whose header checksum did not match. */
     uint32_t pages_checksum_bad;
+    /** Fragments by kind, and how joined messages ended. */
+    uint32_t fragments_first;
+    uint32_t fragments_more;
+    uint32_t fragments_last;
+    uint32_t joined_complete;
+    uint32_t joined_orphan;
+    uint32_t joined_timeout;
     /** Phases dropped because the block information word failed BCH. */
     uint32_t phases_bad_biw;
     /** Pages skipped because the address or vector word failed BCH. */
@@ -46,6 +53,8 @@ typedef struct {
     bool duplicate;
     /** Some words were rebuilt from earlier copies of the page. */
     bool repaired;
+    /** A FLEX secure page, or text that looks like an encrypted payload. */
+    bool encrypted;
 } FlexPageInfo;
 
 /** Rate at which RX_HARD_DATA is sampled: 8 samples per 3200-baud symbol. */

@@ -26,6 +26,7 @@ bool pcsg_filter_accepts(
     FlexPageInfo page;
     subghz_protocol_decoder_flex_get_page_info(decoder_base, &page);
     if(page.duplicate && filter->hide_duplicates) return false;
+    if(page.encrypted && filter->hide_encrypted) return false;
 
     switch(page.kind) {
     case FlexPageKindAlpha:
@@ -112,6 +113,9 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "FlexDups", &value, 1)) {
             filter->hide_duplicates = value == 0;
         }
+        if(flipper_format_read_uint32(file, "FlexEncrypted", &value, 1)) {
+            filter->hide_encrypted = value == 0;
+        }
     } while(false);
 
     furi_string_free(text);
@@ -149,6 +153,8 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "CapcodeMax", &filter->capcode_max, 1)) break;
         value = !filter->hide_duplicates;
         if(!flipper_format_write_uint32(file, "FlexDups", &value, 1)) break;
+        value = !filter->hide_encrypted;
+        if(!flipper_format_write_uint32(file, "FlexEncrypted", &value, 1)) break;
         saved = true;
     } while(false);
 

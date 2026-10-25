@@ -29,6 +29,7 @@ typedef struct {
     uint32_t capcode_min;
     uint32_t capcode_max;
     bool hide_duplicates;
+    bool hide_encrypted;
 } PCSGFilterSettings;
 
 typedef struct POCSAGPagerApp POCSAGPagerApp;

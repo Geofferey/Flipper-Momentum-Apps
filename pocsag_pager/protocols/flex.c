@@ -43,6 +43,7 @@
 // each needing a slot; idle slots hold no text.
 #define FLEX_FRAGMENT_SLOTS      8U
 #define FLEX_FRAGMENT_TIMEOUT_MS (4U * 60U * 1000U)
+#define FLEX_ENCRYPTED_MIN_RUN   32U
 #define FLEX_JOINED_MAX_CHARS    1024U
 #define FLEX_GAP_MARK            "[...]"
 
@@ -171,6 +172,7 @@ struct SubGhzProtocolDecoderFlex {
     bool page_repaired;
     bool page_suspect;
     bool page_duplicate;
+    bool page_encrypted;
 
     uint32_t capcode;
     uint8_t page_type;
@@ -602,7 +604,41 @@ static bool flex_seen_check(SubGhzProtocolDecoderFlex* instance, uint32_t hash) 
     return false;
 }
 
+/*
+ * Encrypted payloads sent as alphanumeric text show up as one unbroken run of
+ * base64 characters mixing upper case, lower case and digits, with nothing
+ * else around it but a few markers. Plain text is broken up by spaces and
+ * punctuation long before 32 characters.
+ */
+static bool flex_text_looks_encrypted(const char* text) {
+    const size_t length = strlen(text);
+    size_t best = 0;
+    size_t run = 0;
+    uint8_t classes = 0;
+    for(size_t i = 0; i <= length; i++) {
+        const char c = text[i];
+        const bool base64 = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                            (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+        if(base64) {
+            run++;
+            if(c >= 'A' && c <= 'Z') classes |= 1U;
+            if(c >= 'a' && c <= 'z') classes |= 2U;
+            if(c >= '0' && c <= '9') classes |= 4U;
+            continue;
+        }
+        if(run >= FLEX_ENCRYPTED_MIN_RUN && classes == 7U && run > best) best = run;
+        run = 0;
+        classes = 0;
+    }
+    return best && length - best <= MAX(4U, length / 10U);
+}
+
 static void flex_emit_page(SubGhzProtocolDecoderFlex* instance, uint32_t hash) {
+    const char* message = furi_string_get_cstr(instance->generic.result_msg);
+    instance->page_encrypted =
+        instance->page_type == FlexPageTypeSecure ||
+        (instance->page_type == FlexPageTypeAlphanumeric && !strncmp(message, "ALN: ", 5) &&
+         flex_text_looks_encrypted(message + 5));
     instance->page_duplicate = flex_seen_check(instance, hash);
     instance->stats.pages_decoded++;
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
@@ -643,6 +679,7 @@ static void flex_fragment_flush_expired(SubGhzProtocolDecoderFlex* instance) {
     for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
         FlexFragmentSlot* slot = &instance->fragments[i];
         if(slot->used && now - slot->tick >= furi_ms_to_ticks(FLEX_FRAGMENT_TIMEOUT_MS)) {
+            instance->stats.joined_timeout++;
             flex_fragment_flush(instance, slot, true);
         }
     }
@@ -662,6 +699,14 @@ static void flex_fragment_add(
     bool continuation,
     const char* text,
     char phase) {
+    if(fragment == 3U) {
+        instance->stats.fragments_first++;
+    } else if(continuation) {
+        instance->stats.fragments_more++;
+    } else {
+        instance->stats.fragments_last++;
+    }
+
     FlexFragmentSlot* slot = NULL;
     for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
         FlexFragmentSlot* candidate = &instance->fragments[i];
@@ -697,7 +742,10 @@ static void flex_fragment_add(
         slot->message_number = message_number;
         slot->text = furi_string_alloc();
         // A later fragment without its start: the beginning is missing.
-        if(fragment != 3U) furi_string_set_str(slot->text, FLEX_GAP_MARK);
+        if(fragment != 3U) {
+            furi_string_set_str(slot->text, FLEX_GAP_MARK);
+            instance->stats.joined_orphan++;
+        }
     } else if(fragment != slot->next_fragment) {
         furi_string_cat_str(slot->text, FLEX_GAP_MARK);
     }
@@ -715,7 +763,10 @@ static void flex_fragment_add(
     slot->phase = phase;
     slot->tick = furi_get_tick();
 
-    if(!continuation) flex_fragment_flush(instance, slot, false);
+    if(!continuation) {
+        instance->stats.joined_complete++;
+        flex_fragment_flush(instance, slot, false);
+    }
 }
 
 static bool flex_partial_matches(
@@ -960,13 +1011,16 @@ static void flex_decode_phase(
 
         uint8_t first = (vector >> 7) & 0x7F;
         const uint8_t length = numeric ? ((vector >> 14) & 0x07) + 1U : (vector >> 14) & 0x7F;
-        uint16_t last = first + length - 1U;
-        if(length == 0 || last >= FLEX_PHASE_WORDS) {
+        const bool alpha = type == FlexPageTypeAlphanumeric || type == FlexPageTypeSecure;
+        // With a long address the alphanumeric header is in the vector field,
+        // so the message field is one word shorter than the length says.
+        const uint8_t field_words = (alpha && long_address && length) ? length - 1U : length;
+        uint16_t last = first + field_words - 1U;
+        if(length == 0 || (field_words && last >= FLEX_PHASE_WORDS)) {
             instance->stats.pages_bad_range++;
             continue;
         }
 
-        const bool alpha = type == FlexPageTypeAlphanumeric || type == FlexPageTypeSecure;
         const uint32_t* page_words = words;
         const bool* page_valid = valid;
         if(alpha) {
@@ -1302,6 +1356,7 @@ void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* inf
     info->capcode = instance->capcode;
     info->duplicate = instance->page_duplicate;
     info->repaired = instance->page_repaired;
+    info->encrypted = instance->page_encrypted;
     switch(instance->page_type) {
     case FlexPageTypeTone:
         info->kind = FlexPageKindTone;

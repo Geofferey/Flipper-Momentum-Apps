@@ -202,6 +202,16 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.pages_short_instruction,
                 decoder_stats.pages_bad_range,
                 decoder_stats.pages_parse_failed);
+            FURI_LOG_I(
+                TAG,
+                "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu ksum_bad=%lu",
+                decoder_stats.fragments_first,
+                decoder_stats.fragments_more,
+                decoder_stats.fragments_last,
+                decoder_stats.joined_complete,
+                decoder_stats.joined_orphan,
+                decoder_stats.joined_timeout,
+                decoder_stats.pages_checksum_bad);
             last_log_tick = now;
         }
         if(!processed) furi_delay_tick(1);
