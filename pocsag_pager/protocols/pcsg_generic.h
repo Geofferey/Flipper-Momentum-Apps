@@ -15,6 +15,8 @@ extern "C" {
 
 typedef struct PCSGBlockGeneric PCSGBlockGeneric;
 
+#define PCSG_GENERIC_MAX_FIELD_LENGTH 768U
+
 struct PCSGBlockGeneric {
     const char* protocol_name;
     FuriString* result_ric;

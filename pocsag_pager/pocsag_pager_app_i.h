@@ -10,10 +10,13 @@
 #include <gui/modules/submenu.h>
 #include <gui/modules/variable_item_list.h>
 #include <gui/modules/widget.h>
+#include <gui/modules/number_input.h>
 #include <notification/notification_messages.h>
 #include "views/pocsag_pager_receiver.h"
 #include "views/pocsag_pager_receiver_info.h"
 #include "pocsag_pager_history.h"
+#include "flex_sampler.h"
+#include "pocsag_pager_settings.h"
 
 #include <lib/subghz/subghz_setting.h>
 #include <lib/subghz/subghz_worker.h>
@@ -31,6 +34,7 @@ struct POCSAGPagerTxRx {
     SubGhzReceiver* receiver;
     SubGhzRadioPreset* preset;
     PCSGHistory* history;
+    FlexSampler* flex_sampler;
     uint16_t idx_menu_chosen;
     PCSGTxRxState txrx_state;
     PCSGHopperState hopper_state;
@@ -52,10 +56,13 @@ struct POCSAGPagerApp {
     VariableItemList* variable_item_list;
     Submenu* submenu;
     Widget* widget;
+    NumberInput* number_input;
     PCSGReceiver* pcsg_receiver;
     PCSGReceiverInfo* pcsg_receiver_info;
     PCSGLock lock;
     SubGhzSetting* setting;
+    PCSGFilterSettings filter;
+    uint8_t config_selected_index;
 };
 
 void pcsg_preset_init(
@@ -68,6 +75,7 @@ void pcsg_get_frequency_modulation(
     POCSAGPagerApp* app,
     FuriString* frequency,
     FuriString* modulation);
+bool pcsg_preset_is_flex4(const char* preset_name);
 void pcsg_begin(POCSAGPagerApp* app, uint8_t* preset_data);
 uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency);
 void pcsg_idle(POCSAGPagerApp* app);

@@ -1,5 +1,6 @@
 #include "../pocsag_pager_app_i.h"
 #include "../views/pocsag_pager_receiver.h"
+#include "../protocols/flex.h"
 
 static const NotificationSequence subghs_sequence_rx = {
     &message_green_255,
@@ -71,6 +72,14 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
     void* context) {
     furi_assert(context);
     POCSAGPagerApp* app = context;
+    // FLEX reports each page of a frame from inside its decoder and keeps its
+    // symbol clock running between frames, so it must not be reset here.
+    const bool flex = decoder_base->protocol == &subghz_protocol_flex;
+    if(!pcsg_filter_accepts(&app->filter, decoder_base)) {
+        if(!flex) subghz_receiver_reset(receiver);
+        return;
+    }
+
     FuriString* str_buff;
     str_buff = furi_string_alloc();
 
@@ -94,13 +103,19 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
             notification_message(app->notifications, &subghs_sequence_rx_locked);
         }
     }
-    subghz_receiver_reset(receiver);
+    if(!flex) subghz_receiver_reset(receiver);
     furi_string_free(str_buff);
     app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
 }
 
 void pocsag_pager_scene_receiver_on_enter(void* context) {
     POCSAGPagerApp* app = context;
+    const bool flex4 =
+        pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name));
+
+    // FLEX4 uses the CC1101 MISO/GDO1 pin as a second hard-decision data bit.
+    // Frequency hopping and RSSI reads use SPI and would corrupt those samples.
+    if(flex4) app->txrx->hopper_state = PCSGHopperStateOFF;
 
     FuriString* str_buff;
     str_buff = furi_string_alloc();
@@ -194,13 +209,17 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             break;
         }
     } else if(event.type == SceneManagerEventTypeTick) {
-        if(app->txrx->hopper_state != PCSGHopperStateOFF) {
+        const bool flex4 =
+            pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name));
+        if(!flex4 && app->txrx->hopper_state != PCSGHopperStateOFF) {
             pcsg_hopper_update(app);
             pocsag_pager_scene_receiver_update_statusbar(app);
         }
-        // Get current RSSI
-        float rssi = subghz_devices_get_rssi(app->txrx->radio_device);
-        pcsg_receiver_rssi(app->pcsg_receiver, rssi);
+        if(!flex4) {
+            // FLEX4 needs uninterrupted access to both hard-decision GPIOs.
+            const float rssi = subghz_devices_get_rssi(app->txrx->radio_device);
+            pcsg_receiver_rssi(app->pcsg_receiver, rssi);
+        }
 
         if(app->txrx->txrx_state == PCSGTxRxStateRx) {
             notification_message(app->notifications, &sequence_blink_cyan_10);

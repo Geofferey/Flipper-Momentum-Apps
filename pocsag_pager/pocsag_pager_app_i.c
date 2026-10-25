@@ -3,6 +3,19 @@
 #define TAG "POCSAGPager"
 #include <flipper_format/flipper_format_i.h>
 
+static bool pcsg_preset_has_mode_prefix(const char* preset_name, const char* prefix) {
+    const size_t prefix_length = strlen(prefix);
+    if(strncmp(preset_name, prefix, prefix_length) != 0) return false;
+    const char suffix = preset_name[prefix_length];
+    return suffix == '\0' || suffix == '-' || suffix == ' ' || suffix == '\t';
+}
+
+bool pcsg_preset_is_flex4(const char* preset_name) {
+    furi_assert(preset_name);
+    return pcsg_preset_has_mode_prefix(preset_name, "FLEX4") ||
+           pcsg_preset_has_mode_prefix(preset_name, "FLEX-4");
+}
+
 void pcsg_preset_init(
     void* context,
     const char* preset_name,
@@ -30,7 +43,14 @@ void pcsg_get_frequency_modulation(
             app->txrx->preset->frequency / 10000 % 100);
     }
     if(modulation != NULL) {
-        furi_string_printf(modulation, "%.2s", furi_string_get_cstr(app->txrx->preset->name));
+        const char* preset_name = furi_string_get_cstr(app->txrx->preset->name);
+        if(pcsg_preset_is_flex4(preset_name)) {
+            furi_string_set_str(modulation, "F4");
+        } else if(!strncmp(preset_name, "FLEX", 4)) {
+            furi_string_set_str(modulation, "FX");
+        } else {
+            furi_string_printf(modulation, "%.2s", preset_name);
+        }
     }
 }
 
@@ -62,9 +82,13 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
     subghz_devices_flush_rx(app->txrx->radio_device);
     subghz_devices_set_rx(app->txrx->radio_device);
 
-    subghz_devices_start_async_rx(
-        app->txrx->radio_device, subghz_worker_rx_callback, app->txrx->worker);
-    subghz_worker_start(app->txrx->worker);
+    if(pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name))) {
+        flex_sampler_start(app->txrx->flex_sampler);
+    } else {
+        subghz_devices_start_async_rx(
+            app->txrx->radio_device, subghz_worker_rx_callback, app->txrx->worker);
+        subghz_worker_start(app->txrx->worker);
+    }
     app->txrx->txrx_state = PCSGTxRxStateRx;
     return value;
 }
@@ -79,7 +103,9 @@ void pcsg_idle(POCSAGPagerApp* app) {
 void pcsg_rx_end(POCSAGPagerApp* app) {
     furi_assert(app);
     furi_assert(app->txrx->txrx_state == PCSGTxRxStateRx);
-    if(subghz_worker_is_running(app->txrx->worker)) {
+    if(flex_sampler_is_running(app->txrx->flex_sampler)) {
+        flex_sampler_stop(app->txrx->flex_sampler);
+    } else if(subghz_worker_is_running(app->txrx->worker)) {
         subghz_worker_stop(app->txrx->worker);
         subghz_devices_stop_async_rx(app->txrx->radio_device);
     }

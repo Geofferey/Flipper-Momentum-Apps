@@ -10,6 +10,6 @@ App(
     fap_category="Sub-GHz",
     fap_icon_assets="images",
     fap_author="@xMasterX & @Shmuma",
-    fap_version="1.5",
-    fap_description="Receive POCSAG and two-level FLEX pager messages on CC1101 supported frequencies.",
+    fap_version="1.6",
+    fap_description="Receive POCSAG and two- or four-level FLEX pager messages on CC1101 supported frequencies.",
 )

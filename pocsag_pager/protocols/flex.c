@@ -1,5 +1,5 @@
 /*
- * FLEX pager decoder for the Flipper Zero asynchronous CC1101 input.
+ * FLEX pager decoder for the Flipper Zero CC1101 input.
  *
  * Framing and page parsing are adapted from multimon-ng's demod_flex.c,
  * Copyright 2004, 2006, 2010 Free Software Foundation, Inc. and contributors.
@@ -23,6 +23,21 @@
 #define FLEX_SYNC2_DURATION_MS 25U
 #define FLEX_DATA_DURATION_MS 1760U
 #define FLEX_MAX_RUN_SYMBOLS 512U
+#define FLEX_MAX_MESSAGE_CHARS 256U
+#define FLEX_TRUNCATION_MARK   "..."
+#define FLEX_NO_WORD           0xFFU
+#define FLEX_NUMERIC_MAX_WORDS 9U
+
+#define FLEX_PARTIAL_PAGES        4U
+#define FLEX_PARTIAL_TIMEOUT_MS   (10U * 60U * 1000U)
+#define FLEX_SEEN_PAGES           32U
+#define FLEX_DUPLICATE_WINDOW_MS  (5U * 60U * 1000U)
+
+// 4-FSK clock phase is a 16-bit fraction of one symbol; 0 is the boundary.
+#define FLEX_CLOCK_QUARTER  0x4000U
+#define FLEX_CLOCK_WINDOW   0x6000U
+#define FLEX_CLOCK_CENTER   0x8000U
+#define FLEX_CLOCK_DECISION 0xC000U
 
 typedef enum {
     FlexDecoderStateSync1,
@@ -47,6 +62,26 @@ typedef struct {
     uint16_t baud;
     uint8_t levels;
 } FlexMode;
+
+typedef struct {
+    bool used;
+    uint32_t tick;
+    uint32_t capcode;
+    uint8_t type;
+    uint8_t length;
+    bool valid[FLEX_PHASE_WORDS];
+    // Raw copies seen of each unrecovered word; 0 once recovered.
+    uint8_t copies[FLEX_PHASE_WORDS];
+    // Decoded data once valid, otherwise the latest raw copy.
+    uint32_t words[FLEX_PHASE_WORDS];
+    // The raw copy before the latest, for majority voting.
+    uint32_t previous[FLEX_PHASE_WORDS];
+} FlexPartialPage;
+
+typedef struct {
+    uint32_t hash;
+    uint32_t tick;
+} FlexSeenPage;
 
 static const FlexMode flex_modes[] = {
     {.sync = 0x870C, .baud = 1600, .levels = 2},
@@ -76,9 +111,31 @@ struct SubGhzProtocolDecoderFlex {
     uint16_t data_bit_count;
     bool phase_toggle;
     uint32_t phase_a[FLEX_PHASE_WORDS];
+    uint32_t phase_b[FLEX_PHASE_WORDS];
     uint32_t phase_c[FLEX_PHASE_WORDS];
+    uint32_t phase_d[FLEX_PHASE_WORDS];
 
-    bool page_ready;
+    bool four_level_path;
+    bool clock_seen;
+    bool clock_decided;
+    uint16_t clock_baud;
+    uint16_t clock_phase;
+    uint8_t clock_last_level;
+    uint8_t clock_center_level;
+    uint8_t clock_votes[4];
+
+    FlexDecoderStats stats;
+
+    // Incomplete pages waiting for another copy, and pages emitted recently.
+    // Both survive decoder resets.
+    FlexPartialPage partial[FLEX_PARTIAL_PAGES];
+    FlexSeenPage seen[FLEX_SEEN_PAGES];
+    uint8_t seen_next;
+    uint32_t merged_words[FLEX_PHASE_WORDS];
+    bool merged_valid[FLEX_PHASE_WORDS];
+    bool page_repaired;
+    bool page_duplicate;
+
     uint32_t capcode;
     uint8_t page_type;
     uint8_t fragment;
@@ -109,6 +166,18 @@ static void flex_clear_frame(SubGhzProtocolDecoderFlex* instance) {
     instance->phase_toggle = false;
 }
 
+static void flex_reset_clock(SubGhzProtocolDecoderFlex* instance) {
+    instance->clock_seen = false;
+    instance->clock_decided = false;
+    instance->clock_baud = 0;
+    instance->clock_phase = 0;
+    instance->clock_last_level = 0;
+    instance->clock_center_level = 0;
+    memset(instance->clock_votes, 0, sizeof(instance->clock_votes));
+}
+
+// The 4-FSK symbol clock keeps running across frame boundaries and failed
+// headers; only a full decoder reset discards it.
 static void flex_return_to_sync(SubGhzProtocolDecoderFlex* instance) {
     instance->state = FlexDecoderStateSync1;
     instance->sync_buffer = 0;
@@ -143,7 +212,7 @@ void subghz_protocol_decoder_flex_reset(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderFlex* instance = context;
     flex_return_to_sync(instance);
-    instance->page_ready = false;
+    flex_reset_clock(instance);
     instance->capcode = 0;
     instance->page_type = 0;
     instance->fragment = 0;
@@ -167,10 +236,10 @@ static uint16_t flex_sync_check(uint64_t buffer) {
 static bool flex_select_mode(SubGhzProtocolDecoderFlex* instance, uint16_t sync_code) {
     for(size_t i = 0; i < COUNT_OF(flex_modes); i++) {
         if(flex_popcount((uint16_t)(flex_modes[i].sync ^ sync_code)) < 4U) {
-            if(flex_modes[i].levels != 2U) {
+            if(flex_modes[i].levels == 4U && !instance->four_level_path) {
                 FURI_LOG_D(
                     TAG,
-                    "Ignoring unsupported %u/%u FLEX frame",
+                    "Ignoring %u/%u FLEX frame on two-level input",
                     flex_modes[i].baud,
                     flex_modes[i].levels);
                 return false;
@@ -198,7 +267,22 @@ static bool flex_decode_fiw(SubGhzProtocolDecoderFlex* instance) {
 
     instance->cycle = (fiw >> 4) & 0x0F;
     instance->frame = (fiw >> 8) & 0x7F;
+    if(instance->cycle > 14U) return false;
     return true;
+}
+
+static bool flex_word_checksum_valid(uint32_t word) {
+    uint8_t checksum = word & 0x0F;
+    checksum += (word >> 4) & 0x0F;
+    checksum += (word >> 8) & 0x0F;
+    checksum += (word >> 12) & 0x0F;
+    checksum += (word >> 16) & 0x0F;
+    checksum += (word >> 20) & 0x01;
+    return (checksum & 0x0F) == 0x0F;
+}
+
+static uint16_t flex_bit_rate(const SubGhzProtocolDecoderFlex* instance) {
+    return instance->baud * (instance->levels == 4U ? 2U : 1U);
 }
 
 static void flex_set_page_header(
@@ -214,13 +298,14 @@ static void flex_set_page_header(
     instance->phase = phase;
     furi_string_printf(
         instance->generic.result_ric,
-        "[F%u/%c S%u%c %02u.%03u]\n\e#CAP: %09" PRIu32 "\e#\n",
-        instance->baud,
+        "[F%u/%c S%u%c %02u.%03u%s]\n\e#CAP: %09" PRIu32 "\e#\n",
+        flex_bit_rate(instance),
         phase,
         fragment,
         fragment_flag,
         instance->cycle,
         instance->frame,
+        instance->page_repaired ? " R" : "",
         capcode);
 }
 
@@ -235,13 +320,15 @@ static bool flex_word_range_valid(
     return true;
 }
 
-static void flex_append_character(FuriString* output, uint8_t character) {
-    if(character == 0x03) return;
+static bool flex_append_character(FuriString* output, uint8_t character) {
+    if(character == 0x03) return true;
+    if(furi_string_size(output) >= FLEX_MAX_MESSAGE_CHARS) return false;
     if(character == '\r' || character == '\n' || character == '\t') {
         furi_string_push_back(output, ' ');
     } else if(character >= 0x20 && character <= 0x7E) {
         furi_string_push_back(output, (char)character);
     }
+    return true;
 }
 
 static bool flex_parse_alphanumeric(
@@ -263,16 +350,18 @@ static bool flex_parse_alphanumeric(
 
     first++;
     if(first > last) return false;
-    for(uint8_t i = first; i <= last; i++) {
+    bool truncated = false;
+    for(uint8_t i = first; i <= last && !truncated; i++) {
         const uint32_t word = words[i];
         if(i > first || fragment != 3U) {
-            flex_append_character(instance->generic.result_msg, word & 0x7F);
+            truncated |= !flex_append_character(instance->generic.result_msg, word & 0x7F);
         }
-        flex_append_character(instance->generic.result_msg, (word >> 7) & 0x7F);
-        flex_append_character(instance->generic.result_msg, (word >> 14) & 0x7F);
+        truncated |= !flex_append_character(instance->generic.result_msg, (word >> 7) & 0x7F);
+        truncated |= !flex_append_character(instance->generic.result_msg, (word >> 14) & 0x7F);
     }
 
     if(furi_string_size(instance->generic.result_msg) == message_start) return false;
+    if(truncated) furi_string_cat_str(instance->generic.result_msg, FLEX_TRUNCATION_MARK);
     flex_set_page_header(instance, capcode, type, fragment, fragment_flag, phase);
     return true;
 }
@@ -284,28 +373,47 @@ static bool flex_parse_numeric(
     uint32_t capcode,
     uint8_t type,
     uint32_t vector,
+    uint8_t long_data_index,
     char phase) {
     static const char flex_bcd[] = "0123456789 U -][";
     const uint8_t first = (vector >> 7) & 0x7F;
     const uint16_t last = first + ((vector >> 14) & 0x07);
-    if(last >= FLEX_PHASE_WORDS ||
-       !flex_word_range_valid(valid, first, (uint8_t)last)) {
-        return false;
+    if(last >= FLEX_PHASE_WORDS) return false;
+
+    // As in multimon-ng's parse_numeric(), a long address carries the first
+    // data word in its second vector slot, followed by the message words
+    // except the last.
+    uint8_t order[FLEX_NUMERIC_MAX_WORDS];
+    uint8_t count = 0;
+    if(long_data_index != FLEX_NO_WORD) {
+        order[count++] = long_data_index;
+        for(uint8_t i = first; i < last; i++) order[count++] = i;
+    } else {
+        for(uint8_t i = first; i <= last; i++) order[count++] = i;
+    }
+    for(uint8_t i = 0; i < count; i++) {
+        if(!valid[order[i]]) return false;
     }
 
     furi_string_set_str(instance->generic.result_msg, "NUM: ");
     const size_t message_start = furi_string_size(instance->generic.result_msg);
     uint8_t digit = 0;
     uint8_t remaining = (type == FlexPageTypeNumberedNumeric) ? 14U : 6U;
+    bool truncated = false;
 
-    for(uint8_t word_index = first; word_index <= (uint8_t)last; word_index++) {
-        uint32_t word = words[word_index];
+    for(uint8_t i = 0; i < count && !truncated; i++) {
+        uint32_t word = words[order[i]];
         for(uint8_t bit = 0; bit < 21U; bit++) {
             digit = (digit >> 1) & 0x0F;
             if(word & 1U) digit ^= 0x08;
             word >>= 1;
             if(--remaining == 0) {
                 if(digit != 0x0C) {
+                    if(furi_string_size(instance->generic.result_msg) >=
+                       FLEX_MAX_MESSAGE_CHARS) {
+                        truncated = true;
+                        break;
+                    }
                     furi_string_push_back(instance->generic.result_msg, flex_bcd[digit]);
                 }
                 remaining = 4;
@@ -314,6 +422,7 @@ static bool flex_parse_numeric(
     }
 
     if(furi_string_size(instance->generic.result_msg) == message_start) return false;
+    if(truncated) furi_string_cat_str(instance->generic.result_msg, FLEX_TRUNCATION_MARK);
     flex_set_page_header(instance, capcode, type, 0, 'K', phase);
     return true;
 }
@@ -323,6 +432,7 @@ static bool flex_parse_tone(
     uint32_t capcode,
     uint8_t type,
     uint32_t vector,
+    const uint32_t* long_data,
     char phase) {
     static const char flex_bcd[] = "0123456789 U -][";
     furi_string_set_str(instance->generic.result_msg, "TON: ");
@@ -330,6 +440,14 @@ static bool flex_parse_tone(
     if(((vector >> 7) & 0x03) == 0) {
         for(uint8_t shift = 9; shift <= 17; shift += 4) {
             furi_string_push_back(instance->generic.result_msg, flex_bcd[(vector >> shift) & 0x0F]);
+        }
+        // Long addresses add five digits from the second vector slot, as in
+        // multimon-ng's parse_tone_only().
+        if(long_data) {
+            for(uint8_t shift = 0; shift <= 16; shift += 4) {
+                furi_string_push_back(
+                    instance->generic.result_msg, flex_bcd[(*long_data >> shift) & 0x0F]);
+            }
         }
     } else {
         furi_string_cat_str(instance->generic.result_msg, "Tone only");
@@ -339,7 +457,206 @@ static bool flex_parse_tone(
     return true;
 }
 
-static bool flex_decode_phase(
+// Binary pages are shown as raw 21-bit words, like multimon-ng's parse_unknown().
+static bool flex_parse_binary(
+    SubGhzProtocolDecoderFlex* instance,
+    const uint32_t words[FLEX_PHASE_WORDS],
+    const bool valid[FLEX_PHASE_WORDS],
+    uint32_t capcode,
+    uint8_t type,
+    uint8_t first,
+    uint8_t last,
+    char phase) {
+    if(!flex_word_range_valid(valid, first, last)) return false;
+
+    furi_string_set_str(instance->generic.result_msg, "BIN:");
+    for(uint8_t i = first; i <= last; i++) {
+        if(furi_string_size(instance->generic.result_msg) + 7U > FLEX_MAX_MESSAGE_CHARS) {
+            furi_string_cat_str(instance->generic.result_msg, FLEX_TRUNCATION_MARK);
+            break;
+        }
+        furi_string_cat_printf(instance->generic.result_msg, " %06lX", words[i]);
+    }
+
+    flex_set_page_header(instance, capcode, type, 0, 'K', phase);
+    return true;
+}
+
+static uint32_t flex_page_hash(
+    uint32_t capcode,
+    uint8_t type,
+    const uint32_t* words,
+    uint8_t first,
+    uint8_t last) {
+    // FNV-1a over the page identity and its data words.
+    uint32_t hash = 2166136261UL;
+    const uint32_t header[] = {capcode, type};
+    for(size_t i = 0; i < COUNT_OF(header); i++) {
+        hash = (hash ^ header[i]) * 16777619UL;
+    }
+    for(uint16_t i = first; i <= last; i++) {
+        hash = (hash ^ (words[i] & 0x001FFFFFUL)) * 16777619UL;
+    }
+    // Zero marks an empty slot in the seen list.
+    return hash | 1U;
+}
+
+// Remember the page and report whether the same page was emitted recently.
+static bool flex_seen_check(SubGhzProtocolDecoderFlex* instance, uint32_t hash) {
+    const uint32_t now = furi_get_tick();
+    const uint32_t window = furi_ms_to_ticks(FLEX_DUPLICATE_WINDOW_MS);
+    for(size_t i = 0; i < FLEX_SEEN_PAGES; i++) {
+        const FlexSeenPage* seen = &instance->seen[i];
+        if(seen->hash == hash && now - seen->tick < window) return true;
+    }
+    instance->seen[instance->seen_next].hash = hash;
+    instance->seen[instance->seen_next].tick = now;
+    instance->seen_next = (instance->seen_next + 1U) % FLEX_SEEN_PAGES;
+    return false;
+}
+
+static void flex_emit_page(SubGhzProtocolDecoderFlex* instance, uint32_t hash) {
+    instance->page_duplicate = flex_seen_check(instance, hash);
+    instance->stats.pages_decoded++;
+    if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
+}
+
+static bool flex_partial_matches(
+    const FlexPartialPage* partial,
+    uint32_t capcode,
+    uint8_t type,
+    const uint32_t words[FLEX_PHASE_WORDS],
+    const bool valid[FLEX_PHASE_WORDS],
+    uint8_t first,
+    uint8_t length) {
+    if(!partial->used || partial->capcode != capcode || partial->type != type ||
+       partial->length != length) {
+        return false;
+    }
+    if(furi_get_tick() - partial->tick >= furi_ms_to_ticks(FLEX_PARTIAL_TIMEOUT_MS)) {
+        return false;
+    }
+
+    // Another message to the same capcode can share the type and length, so
+    // require at least one word both copies decoded, and no disagreement.
+    uint8_t agreeing = 0;
+    for(uint8_t i = 0; i < length; i++) {
+        if(!partial->valid[i] || !valid[first + i]) continue;
+        if(partial->words[i] != words[first + i]) return false;
+        agreeing++;
+    }
+    return agreeing > 0;
+}
+
+static FlexPartialPage* flex_find_partial(
+    SubGhzProtocolDecoderFlex* instance,
+    uint32_t capcode,
+    uint8_t type,
+    const uint32_t words[FLEX_PHASE_WORDS],
+    const bool valid[FLEX_PHASE_WORDS],
+    uint8_t first,
+    uint8_t length) {
+    for(size_t i = 0; i < FLEX_PARTIAL_PAGES; i++) {
+        if(flex_partial_matches(
+               &instance->partial[i], capcode, type, words, valid, first, length)) {
+            return &instance->partial[i];
+        }
+    }
+    return NULL;
+}
+
+static uint32_t flex_majority(uint32_t a, uint32_t b, uint32_t c) {
+    return (a & b) | (a & c) | (b & c);
+}
+
+// Recover a word that failed BCH in this copy and every earlier one.
+static bool flex_recover_word(FlexPartialPage* partial, uint8_t index, uint32_t copy) {
+    uint32_t recovered = 0;
+    bool ok = false;
+    if(partial->copies[index] >= 2U) {
+        recovered = flex_majority(partial->previous[index], partial->words[index], copy);
+        ok = flex_bch_correct(&recovered) >= 0;
+        if(!ok) ok = flex_bch_combine(partial->previous[index], copy, &recovered);
+    }
+    if(!ok) ok = flex_bch_combine(partial->words[index], copy, &recovered);
+
+    if(ok) {
+        partial->words[index] = recovered & 0x001FFFFFUL;
+        partial->valid[index] = true;
+    } else {
+        partial->previous[index] = partial->words[index];
+        partial->words[index] = copy;
+        if(partial->copies[index] < UINT8_MAX) partial->copies[index]++;
+    }
+    return ok;
+}
+
+/*
+ * Merge an incomplete page with earlier copies of it. Pages are often sent
+ * more than once, and the copies rarely lose the same words. Returns true when
+ * the page is now complete, with its words in merged_words at first..last.
+ */
+static bool flex_repair_page(
+    SubGhzProtocolDecoderFlex* instance,
+    uint32_t capcode,
+    uint8_t type,
+    const uint32_t words[FLEX_PHASE_WORDS],
+    const bool valid[FLEX_PHASE_WORDS],
+    uint8_t first,
+    uint8_t last) {
+    const uint8_t length = last - first + 1U;
+    FlexPartialPage* partial =
+        flex_find_partial(instance, capcode, type, words, valid, first, length);
+
+    if(!partial) {
+        // Reuse an empty or expired slot, otherwise the oldest.
+        partial = &instance->partial[0];
+        for(size_t i = 0; i < FLEX_PARTIAL_PAGES; i++) {
+            FlexPartialPage* slot = &instance->partial[i];
+            if(!slot->used ||
+               furi_get_tick() - slot->tick >= furi_ms_to_ticks(FLEX_PARTIAL_TIMEOUT_MS)) {
+                partial = slot;
+                break;
+            }
+            if(slot->tick - partial->tick > UINT32_MAX / 2U) partial = slot;
+        }
+        partial->used = true;
+        partial->capcode = capcode;
+        partial->type = type;
+        partial->length = length;
+        partial->tick = furi_get_tick();
+        for(uint8_t i = 0; i < length; i++) {
+            partial->words[i] = words[first + i];
+            partial->valid[i] = valid[first + i];
+            partial->copies[i] = valid[first + i] ? 0U : 1U;
+        }
+        return false;
+    }
+
+    partial->tick = furi_get_tick();
+    bool complete = true;
+    for(uint8_t i = 0; i < length; i++) {
+        if(partial->valid[i]) continue;
+        if(valid[first + i]) {
+            partial->words[i] = words[first + i];
+            partial->valid[i] = true;
+        } else if(!flex_recover_word(partial, i, words[first + i])) {
+            complete = false;
+        }
+    }
+    if(!complete) return false;
+
+    memset(instance->merged_valid, 0, sizeof(instance->merged_valid));
+    for(uint8_t i = 0; i < length; i++) {
+        instance->merged_words[first + i] = partial->words[i];
+        instance->merged_valid[first + i] = true;
+    }
+    partial->used = false;
+    return true;
+}
+
+// Emits every page in the phase through the decoder callback.
+static void flex_decode_phase(
     SubGhzProtocolDecoderFlex* instance,
     uint32_t words[FLEX_PHASE_WORDS],
     char phase) {
@@ -347,93 +664,188 @@ static bool flex_decode_phase(
     for(uint8_t i = 0; i < FLEX_PHASE_WORDS; i++) {
         valid[i] = flex_bch_correct(&words[i]) >= 0;
         if(valid[i]) words[i] &= 0x001FFFFFUL;
+        instance->stats.words_total++;
+        if(!valid[i]) {
+            instance->stats.words_bad++;
+            instance->stats.words_bad_phase[(phase - 'A') & 0x03]++;
+        }
     }
 
-    if(!valid[0]) return false;
+    if(!valid[0]) {
+        instance->stats.phases_bad_biw++;
+        return;
+    }
     const uint32_t biw = words[0];
-    if(biw == 0 || biw == 0x001FFFFFUL) return false;
+    if(biw == 0 || biw == 0x001FFFFFUL) return;
 
     const uint8_t vector_offset = (biw >> 10) & 0x3F;
     const uint8_t address_offset = ((biw >> 8) & 0x03) + 1U;
     if(vector_offset < address_offset ||
        (uint16_t)vector_offset + (uint16_t)(vector_offset - address_offset) >
            FLEX_PHASE_WORDS) {
-        return false;
+        return;
     }
 
     for(uint8_t address_index = address_offset; address_index < vector_offset; address_index++) {
         const uint8_t vector_index = vector_offset + address_index - address_offset;
-        if(!valid[address_index] || !valid[vector_index]) continue;
+        if(!valid[address_index] || !valid[vector_index]) {
+            instance->stats.pages_bad_header++;
+            continue;
+        }
 
         const uint32_t address = words[address_index];
         if(address == 0 || address == 0x001FFFFFUL) continue;
 
-        const bool long_address = address < 0x008001UL || address > 0x1E0000UL;
-        if(long_address || address < 0x8000UL) continue;
-        const uint32_t capcode = address - 0x8000UL;
+        // A long address spans two address words and their two vector slots;
+        // the first slot holds the vector and the second extra data. Range
+        // test from multimon-ng's parse_capcode(), capcode formula from PDW.
+        const bool long_address = address < 0x008001UL ||
+                                  (address > 0x1E0000UL && address < 0x1F0001UL) ||
+                                  address > 0x1F7FFEUL;
+        uint32_t capcode;
+        uint8_t long_data_index = FLEX_NO_WORD;
+        if(long_address) {
+            const uint8_t second = ++address_index;
+            long_data_index = vector_index + 1U;
+            if(second >= vector_offset || !valid[second] ||
+               long_data_index >= FLEX_PHASE_WORDS) {
+                instance->stats.pages_bad_header++;
+                continue;
+            }
+            const uint64_t value = (uint64_t)address +
+                                   ((uint64_t)(words[second] ^ 0x001FFFFFUL) << 15) +
+                                   0x1F9000ULL;
+            if(value > UINT32_MAX) {
+                instance->stats.pages_bad_header++;
+                continue;
+            }
+            capcode = (uint32_t)value;
+            instance->stats.pages_long_address++;
+        } else {
+            capcode = address - 0x8000UL;
+        }
 
         const uint32_t vector = words[vector_index];
+        if(!flex_word_checksum_valid(vector)) {
+            instance->stats.pages_bad_header++;
+            continue;
+        }
         const uint8_t type = (vector >> 4) & 0x07;
-        if(type == FlexPageTypeShortInstruction) continue;
+        if(type == FlexPageTypeShortInstruction) {
+            instance->stats.pages_short_instruction++;
+            continue;
+        }
 
-        if(type == FlexPageTypeAlphanumeric || type == FlexPageTypeSecure) {
-            const uint8_t first = (vector >> 7) & 0x7F;
-            const uint8_t length = (vector >> 14) & 0x7F;
-            if(length == 0) continue;
-            const uint16_t last = first + length - 1U;
-            if(last >= FLEX_PHASE_WORDS) continue;
-            if(flex_parse_alphanumeric(
-                   instance,
-                   words,
-                   valid,
-                   capcode,
-                   type,
-                   first,
-                   (uint8_t)last,
-                   phase)) {
-                return true;
+        instance->page_repaired = false;
+        if(type == FlexPageTypeTone) {
+            // Tone pages live in the vector word, plus the second vector slot
+            // for long addresses.
+            const uint32_t* long_data = NULL;
+            if(long_address && valid[long_data_index]) long_data = &words[long_data_index];
+            if(flex_parse_tone(instance, capcode, type, vector, long_data, phase)) {
+                flex_emit_page(instance, flex_page_hash(capcode, type, &vector, 0, 0));
             }
-        } else if(
-            type == FlexPageTypeStandardNumeric || type == FlexPageTypeSpecialNumeric ||
-            type == FlexPageTypeNumberedNumeric) {
-            if(flex_parse_numeric(instance, words, valid, capcode, type, vector, phase)) {
-                return true;
+            continue;
+        }
+
+        const bool numeric = type == FlexPageTypeStandardNumeric ||
+                             type == FlexPageTypeSpecialNumeric ||
+                             type == FlexPageTypeNumberedNumeric;
+        const bool text = type == FlexPageTypeAlphanumeric || type == FlexPageTypeSecure ||
+                          type == FlexPageTypeBinary;
+        if(!numeric && !text) continue;
+
+        const uint8_t first = (vector >> 7) & 0x7F;
+        const uint8_t length = numeric ? ((vector >> 14) & 0x07) + 1U : (vector >> 14) & 0x7F;
+        const uint16_t last = first + length - 1U;
+        if(length == 0 || last >= FLEX_PHASE_WORDS) {
+            instance->stats.pages_bad_range++;
+            continue;
+        }
+
+        const uint32_t* page_words = words;
+        const bool* page_valid = valid;
+        if(numeric && long_address) {
+            // Its words are not one contiguous range, so it cannot be repaired;
+            // the parser checks each word it reads.
+        } else if(flex_word_range_valid(valid, first, (uint8_t)last)) {
+            // A clean copy makes any partial copy of the same page redundant.
+            FlexPartialPage* partial =
+                flex_find_partial(instance, capcode, type, words, valid, first, length);
+            if(partial) partial->used = false;
+        } else {
+            instance->stats.pages_incomplete++;
+            if(!flex_repair_page(instance, capcode, type, words, valid, first, (uint8_t)last)) {
+                continue;
             }
-        } else if(type == FlexPageTypeTone) {
-            if(flex_parse_tone(instance, capcode, type, vector, phase)) return true;
+            page_words = instance->merged_words;
+            page_valid = instance->merged_valid;
+            instance->page_repaired = true;
+            instance->stats.pages_repaired++;
+        }
+
+        bool parsed;
+        if(numeric) {
+            parsed = flex_parse_numeric(
+                instance, page_words, page_valid, capcode, type, vector, long_data_index, phase);
+        } else if(type == FlexPageTypeBinary) {
+            parsed = flex_parse_binary(
+                instance, page_words, page_valid, capcode, type, first, (uint8_t)last, phase);
+        } else {
+            parsed = flex_parse_alphanumeric(
+                instance, page_words, page_valid, capcode, type, first, (uint8_t)last, phase);
+        }
+        if(parsed) {
+            flex_emit_page(
+                instance, flex_page_hash(capcode, type, page_words, first, (uint8_t)last));
+        } else {
+            instance->stats.pages_parse_failed++;
         }
     }
-    return false;
 }
 
 static void flex_decode_data(SubGhzProtocolDecoderFlex* instance) {
-    instance->page_ready = flex_decode_phase(instance, instance->phase_a, 'A');
-    if(!instance->page_ready && instance->baud == 3200U) {
-        instance->page_ready = flex_decode_phase(instance, instance->phase_c, 'C');
-    }
+    // Copy the frame mode so the phase selection survives a callback that
+    // resets the decoder.
+    const uint16_t baud = instance->baud;
+    const uint8_t levels = instance->levels;
+    flex_decode_phase(instance, instance->phase_a, 'A');
+    if(levels == 4U) flex_decode_phase(instance, instance->phase_b, 'B');
+    if(baud == 3200U) flex_decode_phase(instance, instance->phase_c, 'C');
+    if(baud == 3200U && levels == 4U) flex_decode_phase(instance, instance->phase_d, 'D');
 }
 
-static void flex_read_data_bit(SubGhzProtocolDecoderFlex* instance, bool bit) {
+static void flex_read_data_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t symbol) {
     const uint16_t index =
         ((instance->data_bit_count >> 5) & 0xFFF8U) | (instance->data_bit_count & 0x0007U);
     if(index >= FLEX_PHASE_WORDS) return;
 
+    const bool bit_a = symbol > 1U;
+    const bool bit_b = symbol == 1U || symbol == 2U;
     if(instance->baud == 1600U || !instance->phase_toggle) {
         instance->phase_a[index] =
-            (instance->phase_a[index] >> 1) | (bit ? 0x80000000UL : 0);
+            (instance->phase_a[index] >> 1) | (bit_a ? 0x80000000UL : 0);
+        if(instance->levels == 4U) {
+            instance->phase_b[index] =
+                (instance->phase_b[index] >> 1) | (bit_b ? 0x80000000UL : 0);
+        }
         instance->phase_toggle = instance->baud == 3200U;
         if(instance->baud == 1600U) instance->data_bit_count++;
     } else {
         instance->phase_c[index] =
-            (instance->phase_c[index] >> 1) | (bit ? 0x80000000UL : 0);
+            (instance->phase_c[index] >> 1) | (bit_a ? 0x80000000UL : 0);
+        if(instance->levels == 4U) {
+            instance->phase_d[index] =
+                (instance->phase_d[index] >> 1) | (bit_b ? 0x80000000UL : 0);
+        }
         instance->phase_toggle = false;
         instance->data_bit_count++;
     }
 }
 
-static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, bool level) {
+static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t symbol) {
     if(instance->state == FlexDecoderStateSync1) {
-        instance->sync_buffer = (instance->sync_buffer << 1) | (level ? 0U : 1U);
+        instance->sync_buffer = (instance->sync_buffer << 1) | (symbol < 2U ? 1U : 0U);
         uint16_t sync_code = flex_sync_check(instance->sync_buffer);
         bool inverted = false;
         if(sync_code == 0) {
@@ -442,6 +854,7 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, bool level)
         }
 
         if(sync_code != 0 && flex_select_mode(instance, sync_code)) {
+            instance->stats.sync_detected++;
             instance->inverted = inverted;
             instance->fiw_count = 0;
             instance->fiw_raw = 0;
@@ -457,7 +870,8 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, bool level)
         return;
     }
 
-    const bool bit = instance->inverted ? !level : level;
+    const uint8_t rectified_symbol = instance->inverted ? 3U - symbol : symbol;
+    const bool bit = rectified_symbol > 1U;
     switch(instance->state) {
     case FlexDecoderStateFiw:
         instance->fiw_count++;
@@ -466,9 +880,11 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, bool level)
         }
         if(instance->fiw_count == 48U) {
             if(flex_decode_fiw(instance)) {
+                instance->stats.fiw_valid++;
                 instance->sync2_count = 0;
                 instance->state = FlexDecoderStateSync2;
             } else {
+                instance->stats.fiw_invalid++;
                 flex_return_to_sync(instance);
             }
         }
@@ -481,22 +897,22 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, bool level)
             instance->data_bit_count = 0;
             instance->phase_toggle = false;
             memset(instance->phase_a, 0, sizeof(instance->phase_a));
+            memset(instance->phase_b, 0, sizeof(instance->phase_b));
             memset(instance->phase_c, 0, sizeof(instance->phase_c));
+            memset(instance->phase_d, 0, sizeof(instance->phase_d));
             instance->state = FlexDecoderStateData;
         }
         break;
 
     case FlexDecoderStateData:
-        flex_read_data_bit(instance, bit);
+        flex_read_data_symbol(instance, rectified_symbol);
         instance->data_count++;
         if(instance->data_count >= (instance->baud * FLEX_DATA_DURATION_MS) / 1000U) {
             flex_decode_data(instance);
+            instance->stats.frames_completed++;
             instance->state = FlexDecoderStateSync1;
             instance->sync_buffer = 0;
             instance->data_count = 0;
-            if(instance->page_ready && instance->base.callback) {
-                instance->base.callback(&instance->base, instance->base.context);
-            }
         }
         break;
 
@@ -508,6 +924,7 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, bool level)
 void subghz_protocol_decoder_flex_feed(void* context, bool level, uint32_t duration) {
     furi_assert(context);
     SubGhzProtocolDecoderFlex* instance = context;
+    instance->four_level_path = false;
 
     int32_t remaining_half_us = (int32_t)duration * 2;
     uint16_t processed = 0;
@@ -519,7 +936,7 @@ void subghz_protocol_decoder_flex_feed(void* context, bool level, uint32_t durat
                 625U;
         if(remaining_half_us < (int32_t)(symbol_period / 2U)) break;
 
-        flex_process_symbol(instance, level);
+        flex_process_symbol(instance, level ? 3U : 0U);
         remaining_half_us -= symbol_period;
         processed++;
     }
@@ -533,6 +950,129 @@ void subghz_protocol_decoder_flex_feed(void* context, bool level, uint32_t durat
     if(processed == FLEX_MAX_RUN_SYMBOLS || timing_error > timing_tolerance) {
         flex_return_to_sync(instance);
     }
+}
+
+void subghz_protocol_decoder_flex_feed_4fsk_sample(void* context, uint8_t hard_symbol) {
+    furi_assert(context);
+    SubGhzProtocolDecoderFlex* instance = context;
+    static const uint8_t hard_symbol_to_level[] = {1U, 0U, 2U, 3U};
+
+    /*
+     * The phase tracking and modal sampling are reduced, hard-decision versions
+     * of the FLEX demodulators used by multimon-ng and PortaPack Mayhem:
+     * https://github.com/EliasOenal/multimon-ng/blob/master/demod_flex.c
+     * https://github.com/portapack-mayhem/mayhem-firmware/blob/next/firmware/baseband/proc_flex.cpp
+     */
+
+    const uint8_t level = hard_symbol_to_level[hard_symbol & 0x03U];
+    instance->four_level_path = true;
+    if(!instance->clock_seen) {
+        instance->clock_last_level = level;
+        instance->clock_seen = true;
+        return;
+    }
+
+    // Sync 1 and the FIW are always 1600 baud. The rate changes inside
+    // flex_process_symbol(), at the decision point, so rescale what is left of
+    // the current symbol to the new rate to keep the next boundary in place.
+    const uint16_t baud =
+        (instance->state == FlexDecoderStateSync1 || instance->state == FlexDecoderStateFiw) ?
+            FLEX_SYNC_BAUD :
+            instance->baud;
+    if(baud != instance->clock_baud) {
+        if(instance->clock_baud != 0U) {
+            uint32_t remaining = 0x10000UL - instance->clock_phase;
+            remaining = (remaining * baud) / instance->clock_baud;
+            if(remaining > 0x10000UL) remaining = 0x10000UL;
+            instance->clock_phase = (uint16_t)(0x10000UL - remaining);
+        }
+        instance->clock_baud = baud;
+    }
+
+    const uint16_t step = (uint16_t)(((uint32_t)baud << 16) / FLEX_4FSK_SAMPLE_RATE_HZ);
+    const uint16_t previous = instance->clock_phase;
+    uint16_t phase = previous + step;
+
+    // RX_HARD_DATA has no clock on the two available CC1101 pins. A level change
+    // places a symbol boundary halfway between this sample and the last one.
+    // Pull the phase 1/8 of the way toward it. While hunting for Sync 1 every
+    // change counts so the clock can pull in from any phase; once framed only
+    // changes near the boundary count so noisy decisions mid-symbol cannot drag
+    // it. A larger gain lets single glitches move the phase far enough that the
+    // doubled error after the switch to 3200 baud lands outside the window.
+    if(level != instance->clock_last_level) {
+        const int16_t error = (int16_t)(uint16_t)(phase - step / 2U);
+        if(instance->state == FlexDecoderStateSync1 ||
+           (error > -(int16_t)FLEX_CLOCK_WINDOW && error < (int16_t)FLEX_CLOCK_WINDOW)) {
+            phase = (uint16_t)(phase - error / 8);
+        }
+        instance->clock_last_level = level;
+    }
+    instance->clock_phase = phase;
+
+    // Corrections can step the phase backward past the decision point, so a
+    // flag rather than the crossing alone limits it to one decision per symbol.
+    if(phase < FLEX_CLOCK_QUARTER) instance->clock_decided = false;
+
+    const int16_t advance = (int16_t)(uint16_t)(phase - previous);
+    const uint16_t to_center = (uint16_t)(FLEX_CLOCK_CENTER - previous);
+    const uint16_t to_decision = (uint16_t)(FLEX_CLOCK_DECISION - previous);
+    if(advance > 0 && to_center != 0 && to_center <= (uint16_t)advance) {
+        instance->clock_center_level = level;
+    }
+
+    if(phase >= FLEX_CLOCK_QUARTER && phase < FLEX_CLOCK_DECISION) {
+        instance->clock_votes[level]++;
+    }
+
+    if(!instance->clock_decided && advance > 0 && to_decision != 0 &&
+       to_decision <= (uint16_t)advance) {
+        uint8_t voted_level = instance->clock_center_level;
+        for(uint8_t i = 0; i < COUNT_OF(instance->clock_votes); i++) {
+            if(instance->clock_votes[i] > instance->clock_votes[voted_level]) voted_level = i;
+        }
+        memset(instance->clock_votes, 0, sizeof(instance->clock_votes));
+        instance->clock_decided = true;
+        flex_process_symbol(instance, voted_level);
+    }
+}
+
+void subghz_protocol_decoder_flex_reset_stats(void* context) {
+    furi_assert(context);
+    SubGhzProtocolDecoderFlex* instance = context;
+    memset(&instance->stats, 0, sizeof(instance->stats));
+}
+
+void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* info) {
+    furi_assert(context);
+    furi_assert(info);
+    const SubGhzProtocolDecoderFlex* instance = context;
+    info->capcode = instance->capcode;
+    info->duplicate = instance->page_duplicate;
+    info->repaired = instance->page_repaired;
+    switch(instance->page_type) {
+    case FlexPageTypeTone:
+        info->kind = FlexPageKindTone;
+        break;
+    case FlexPageTypeStandardNumeric:
+    case FlexPageTypeSpecialNumeric:
+    case FlexPageTypeNumberedNumeric:
+        info->kind = FlexPageKindNumeric;
+        break;
+    case FlexPageTypeBinary:
+        info->kind = FlexPageKindBinary;
+        break;
+    default:
+        info->kind = FlexPageKindAlpha;
+        break;
+    }
+}
+
+void subghz_protocol_decoder_flex_get_stats(void* context, FlexDecoderStats* stats) {
+    furi_assert(context);
+    furi_assert(stats);
+    const SubGhzProtocolDecoderFlex* instance = context;
+    *stats = instance->stats;
 }
 
 uint8_t subghz_protocol_decoder_flex_get_hash_data(void* context) {
@@ -575,6 +1115,10 @@ SubGhzProtocolStatus subghz_protocol_decoder_flex_serialize(
     if(!flipper_format_write_uint32(flipper_format, "FlexSequence", &value, 1)) {
         return SubGhzProtocolStatusError;
     }
+    value = instance->levels;
+    if(!flipper_format_write_uint32(flipper_format, "FlexLevels", &value, 1)) {
+        return SubGhzProtocolStatusError;
+    }
     return SubGhzProtocolStatusOk;
 }
 
@@ -589,7 +1133,7 @@ SubGhzProtocolStatus
 
     uint32_t value;
     if(flipper_format_read_uint32(flipper_format, "FlexBaud", &value, 1)) {
-        instance->baud = value;
+        if(value == 1600U || value == 3200U) instance->baud = value;
     }
     if(flipper_format_read_uint32(flipper_format, "FlexCycle", &value, 1)) {
         instance->cycle = value;
@@ -598,7 +1142,10 @@ SubGhzProtocolStatus
         instance->frame = value;
     }
     if(flipper_format_read_uint32(flipper_format, "FlexSequence", &value, 1)) {
-        instance->fragment = value;
+        if(value <= 3U) instance->fragment = value;
+    }
+    if(flipper_format_read_uint32(flipper_format, "FlexLevels", &value, 1)) {
+        if(value == 2U || value == 4U) instance->levels = value;
     }
     return SubGhzProtocolStatusOk;
 }
@@ -608,8 +1155,9 @@ void subghz_protocol_decoder_flex_get_string(void* context, FuriString* output) 
     SubGhzProtocolDecoderFlex* instance = context;
     furi_string_cat_printf(
         output,
-        "FLEX %u/2 %02u.%03u %c\r\nCAP: %09" PRIu32 "\r\n",
-        instance->baud,
+        "FLEX %u/%u %02u.%03u %c\r\nCAP: %09" PRIu32 "\r\n",
+        flex_bit_rate(instance),
+        instance->levels,
         instance->cycle,
         instance->frame,
         instance->phase,

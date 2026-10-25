@@ -22,11 +22,11 @@ void pocsag_pager_scene_about_on_enter(void* context) {
     furi_string_cat_printf(temp_str, "\e#%s\n", "Description");
     furi_string_cat_printf(
         temp_str,
-        "Receiving POCSAG and FLEX\npager messages.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect the FLEX modulation in Config for FLEX signals. Use Config to set frequency. Custom frequencies are at the end of the list.\n\nTo add new modulations and\nfrequencies create file\n/pocsag/settings.txt\nAnd copy \nsubghz/assets/setting_user.example\ncontents into new\nsettings.txt\n\n");
+        "Receiving POCSAG and FLEX\npager messages.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect FLEX for 2-level signals. Select FLEX4-3200 or FLEX4-6400 to match a 4-level signal's bit rate. RSSI and hopping are disabled with FLEX4. Use Config to set frequency. Custom frequencies are at the end of the list.\n\nTo add new modulations and\nfrequencies create file\n/pocsag/settings.txt\nAnd copy \nsubghz/assets/setting_user.example\ncontents into new\nsettings.txt\n\n");
 
     furi_string_cat_printf(
         temp_str,
-        "Supported protocols:\nPOCSAG 512\nPOCSAG 1200\nPOCSAG 2400\nFLEX 1600/2\nFLEX 3200/2\n");
+        "Supported protocols:\nPOCSAG 512\nPOCSAG 1200\nPOCSAG 2400\nFLEX 1600/2\nFLEX 3200/2\nFLEX 3200/4\nFLEX 6400/4\n");
 
     widget_add_text_box_element(
         app->widget,

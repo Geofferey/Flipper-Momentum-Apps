@@ -28,14 +28,25 @@ struct PCSGHistory {
     uint32_t last_update_timestamp;
     uint16_t last_index_write;
     uint8_t code_last_hash_data;
+    bool has_last_hash;
     FuriString* tmp_string;
     PCSGHistoryStruct* history;
 };
 
+static void pcsg_history_item_clear(PCSGHistoryItem* item) {
+    if(item->item_str) furi_string_free(item->item_str);
+    if(item->preset) {
+        if(item->preset->name) furi_string_free(item->preset->name);
+        free(item->preset);
+    }
+    if(item->flipper_string) flipper_format_free(item->flipper_string);
+    memset(item, 0, sizeof(PCSGHistoryItem));
+}
+
 PCSGHistory* pcsg_history_alloc(void) {
-    PCSGHistory* instance = malloc(sizeof(PCSGHistory));
+    PCSGHistory* instance = calloc(1, sizeof(PCSGHistory));
     instance->tmp_string = furi_string_alloc();
-    instance->history = malloc(sizeof(PCSGHistoryStruct));
+    instance->history = calloc(1, sizeof(PCSGHistoryStruct));
     PCSGHistoryItemArray_init(instance->history->data);
     return instance;
 }
@@ -45,11 +56,7 @@ void pcsg_history_free(PCSGHistory* instance) {
     furi_string_free(instance->tmp_string);
     for
         M_EACH(item, instance->history->data, PCSGHistoryItemArray_t) {
-            furi_string_free(item->item_str);
-            furi_string_free(item->preset->name);
-            free(item->preset);
-            flipper_format_free(item->flipper_string);
-            item->type = 0;
+            pcsg_history_item_clear(item);
         }
     PCSGHistoryItemArray_clear(instance->history->data);
     free(instance->history);
@@ -79,15 +86,12 @@ void pcsg_history_reset(PCSGHistory* instance) {
     furi_string_reset(instance->tmp_string);
     for
         M_EACH(item, instance->history->data, PCSGHistoryItemArray_t) {
-            furi_string_free(item->item_str);
-            furi_string_free(item->preset->name);
-            free(item->preset);
-            flipper_format_free(item->flipper_string);
-            item->type = 0;
+            pcsg_history_item_clear(item);
         }
     PCSGHistoryItemArray_reset(instance->history->data);
     instance->last_index_write = 0;
     instance->code_last_hash_data = 0;
+    instance->has_last_hash = false;
 }
 
 uint16_t pcsg_history_get_item(PCSGHistory* instance) {
@@ -123,7 +127,7 @@ FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx) {
 }
 bool pcsg_history_get_text_space_left(PCSGHistory* instance, FuriString* output) {
     furi_assert(instance);
-    if(instance->last_index_write == PCSG_HISTORY_MAX) {
+    if(instance->last_index_write >= PCSG_HISTORY_MAX) {
         if(output != NULL) furi_string_printf(output, "Memory is FULL");
         return true;
     }
@@ -145,79 +149,78 @@ PCSGHistoryStateAddKey
     if(instance->last_index_write >= PCSG_HISTORY_MAX) return PCSGHistoryStateAddKeyOverflow;
 
     SubGhzProtocolDecoderBase* decoder_base = context;
-    if((instance->code_last_hash_data ==
-        subghz_protocol_decoder_base_get_hash_data(decoder_base)) &&
+    const uint8_t hash = subghz_protocol_decoder_base_get_hash_data(decoder_base);
+    if(instance->has_last_hash && (instance->code_last_hash_data == hash) &&
        ((furi_get_tick() - instance->last_update_timestamp) < 500)) {
         instance->last_update_timestamp = furi_get_tick();
         return PCSGHistoryStateAddKeyTimeOut;
     }
 
-    instance->code_last_hash_data = subghz_protocol_decoder_base_get_hash_data(decoder_base);
-    instance->last_update_timestamp = furi_get_tick();
+    PCSGHistoryItem pending = {0};
+    FuriString* temp_ric = furi_string_alloc();
+    FuriString* temp_message = furi_string_alloc();
+    bool valid = false;
 
-    FlipperFormat* fff = flipper_format_string_alloc();
-    subghz_protocol_decoder_base_serialize(decoder_base, fff, preset);
+    pending.preset = calloc(1, sizeof(SubGhzRadioPreset));
+    pending.type = decoder_base->protocol->type;
+    pending.preset->frequency = preset->frequency;
+    pending.preset->name = furi_string_alloc_set(preset->name);
+    pending.preset->data = preset->data;
+    pending.preset->data_size = preset->data_size;
+    pending.item_str = furi_string_alloc();
+    pending.flipper_string = flipper_format_string_alloc();
 
     do {
-        if(!flipper_format_rewind(fff)) {
+        if(subghz_protocol_decoder_base_serialize(
+               decoder_base, pending.flipper_string, pending.preset) !=
+           SubGhzProtocolStatusOk) {
+            FURI_LOG_E(TAG, "Serialize error");
+            break;
+        }
+        if(!flipper_format_rewind(pending.flipper_string)) {
             FURI_LOG_E(TAG, "Rewind error");
             break;
         }
-
-    } while(false);
-    flipper_format_free(fff);
-
-    PCSGHistoryItem* item = PCSGHistoryItemArray_push_raw(instance->history->data);
-    item->preset = malloc(sizeof(SubGhzRadioPreset));
-    item->type = decoder_base->protocol->type;
-    item->preset->frequency = preset->frequency;
-    item->preset->name = furi_string_alloc();
-    furi_string_set(item->preset->name, preset->name);
-    item->preset->data = preset->data;
-    item->preset->data_size = preset->data_size;
-
-    item->item_str = furi_string_alloc();
-    item->flipper_string = flipper_format_string_alloc();
-    subghz_protocol_decoder_base_serialize(decoder_base, item->flipper_string, preset);
-
-    do {
-        if(!flipper_format_rewind(item->flipper_string)) {
-            FURI_LOG_E(TAG, "Rewind error");
-            break;
-        }
-        if(!flipper_format_read_string(item->flipper_string, "Protocol", instance->tmp_string)) {
+        if(!flipper_format_read_string(
+               pending.flipper_string, "Protocol", instance->tmp_string)) {
             FURI_LOG_E(TAG, "Missing Protocol");
             break;
         }
 
-        if(!flipper_format_rewind(item->flipper_string)) {
+        if(!flipper_format_rewind(pending.flipper_string)) {
             FURI_LOG_E(TAG, "Rewind error");
             break;
         }
-        FuriString* temp_ric = furi_string_alloc();
-        if(!flipper_format_read_string(item->flipper_string, "Ric", temp_ric)) {
+        if(!flipper_format_read_string(pending.flipper_string, "Ric", temp_ric)) {
             FURI_LOG_E(TAG, "Missing Ric");
             break;
         }
 
-        FuriString* temp_message = furi_string_alloc();
-        if(!flipper_format_read_string(item->flipper_string, "Message", temp_message)) {
+        if(!flipper_format_read_string(pending.flipper_string, "Message", temp_message)) {
             FURI_LOG_E(TAG, "Missing Message");
             break;
         }
 
         furi_string_printf(
-            item->item_str,
+            pending.item_str,
             "%s%s",
             furi_string_get_cstr(temp_ric),
             furi_string_get_cstr(temp_message));
-
-        furi_string_free(temp_message);
-        furi_string_free(temp_ric);
-
+        valid = true;
     } while(false);
+
+    furi_string_free(temp_message);
+    furi_string_free(temp_ric);
+    if(!valid) {
+        pcsg_history_item_clear(&pending);
+        return PCSGHistoryStateAddKeyUnknown;
+    }
+
+    PCSGHistoryItem* item = PCSGHistoryItemArray_push_raw(instance->history->data);
+    *item = pending;
+    instance->code_last_hash_data = hash;
+    instance->has_last_hash = true;
+    instance->last_update_timestamp = furi_get_tick();
     instance->last_index_write++;
     return PCSGHistoryStateAddKeyNewDada;
-
-    return PCSGHistoryStateAddKeyUnknown;
 }

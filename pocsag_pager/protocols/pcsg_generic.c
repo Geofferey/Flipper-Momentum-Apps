@@ -32,6 +32,11 @@ SubGhzProtocolStatus pcsg_block_generic_serialize(
     FuriString* temp_str;
     temp_str = furi_string_alloc();
     do {
+        if(furi_string_size(instance->result_ric) > PCSG_GENERIC_MAX_FIELD_LENGTH ||
+           furi_string_size(instance->result_msg) > PCSG_GENERIC_MAX_FIELD_LENGTH) {
+            FURI_LOG_E(TAG, "Message fields exceed size limit");
+            break;
+        }
         stream_clean(flipper_format_get_raw_stream(flipper_format));
         if(!flipper_format_write_header_cstr(
                flipper_format, PCSG_KEY_FILE_TYPE, PCSG_KEY_FILE_VERSION)) {
@@ -100,15 +105,23 @@ SubGhzProtocolStatus
             FURI_LOG_E(TAG, "Missing Ric");
             break;
         }
+        if(furi_string_size(temp_data2) > PCSG_GENERIC_MAX_FIELD_LENGTH) {
+            FURI_LOG_E(TAG, "Ric is too large");
+            break;
+        }
+        if(!flipper_format_read_string(flipper_format, "Message", temp_data)) {
+            FURI_LOG_E(TAG, "Missing Message");
+            break;
+        }
+        if(furi_string_size(temp_data) > PCSG_GENERIC_MAX_FIELD_LENGTH) {
+            FURI_LOG_E(TAG, "Message is too large");
+            break;
+        }
+
         if(instance->result_ric != NULL) {
             furi_string_set(instance->result_ric, temp_data2);
         } else {
             instance->result_ric = furi_string_alloc_set(temp_data2);
-        }
-
-        if(!flipper_format_read_string(flipper_format, "Message", temp_data)) {
-            FURI_LOG_E(TAG, "Missing Message");
-            break;
         }
         if(instance->result_msg != NULL) {
             furi_string_set(instance->result_msg, temp_data);

@@ -32,6 +32,8 @@ static const SubGhzBlockConst pocsag2400_const = {
 #define POCSAG_FUNC_ALERT1 1
 #define POCSAG_FUNC_ALERT2 2
 #define POCSAG_FUNC_ALPHANUM 3
+#define POCSAG_MAX_RUN_BITS 512U
+#define POCSAG_MAX_MESSAGE_CHARS 512U
 
 static const char* func_msg[] = {"\e#Num:\e# ", "\e#Alert\e#", "\e#Alert:\e# ", "\e#Msg:\e# "};
 static const char* bcd_chars = "*U -)(";
@@ -58,6 +60,7 @@ struct SubGhzProtocolDecoderPocsag {
 
     SubGhzBlockConst* pocsag_timing;
     uint32_t version;
+    bool overflowed;
 };
 
 typedef struct SubGhzProtocolDecoderPocsag SubGhzProtocolDecoderPocsag;
@@ -72,18 +75,14 @@ typedef enum {
 void* subghz_protocol_decoder_pocsag_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
 
-    SubGhzProtocolDecoderPocsag* instance = malloc(sizeof(SubGhzProtocolDecoderPocsag));
+    SubGhzProtocolDecoderPocsag* instance = calloc(1, sizeof(SubGhzProtocolDecoderPocsag));
     instance->base.protocol = &subghz_protocol_pocsag;
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->msg = furi_string_alloc();
     instance->done_msg = furi_string_alloc();
     instance->pocsag_timing = NULL; //not synced yet
-    if(instance->generic.result_msg == NULL) {
-        instance->generic.result_msg = furi_string_alloc();
-    }
-    if(instance->generic.result_ric == NULL) {
-        instance->generic.result_ric = furi_string_alloc();
-    }
+    instance->generic.result_msg = furi_string_alloc();
+    instance->generic.result_ric = furi_string_alloc();
 
     return instance;
 }
@@ -112,6 +111,7 @@ void subghz_protocol_decoder_pocsag_reset(void* context) {
     instance->codeword_idx = 0;
     instance->char_bits = 0;
     instance->char_data = 0;
+    instance->overflowed = false;
     furi_string_reset(instance->msg);
     furi_string_reset(instance->done_msg);
     furi_string_reset(instance->generic.result_msg);
@@ -133,6 +133,10 @@ static bool decode_message_alphanumeric(SubGhzProtocolDecoderPocsag* instance, u
         instance->char_bits++;
         if(instance->char_bits == 7) {
             if(instance->char_data == 0) return false;
+            if(furi_string_size(instance->msg) >= POCSAG_MAX_MESSAGE_CHARS) {
+                instance->overflowed = true;
+                return false;
+            }
             furi_string_push_back(instance->msg, instance->char_data);
             instance->char_data = 0;
             instance->char_bits = 0;
@@ -142,7 +146,7 @@ static bool decode_message_alphanumeric(SubGhzProtocolDecoderPocsag* instance, u
     return true;
 }
 
-static void decode_message_numeric(SubGhzProtocolDecoderPocsag* instance, uint32_t data) {
+static bool decode_message_numeric(SubGhzProtocolDecoderPocsag* instance, uint32_t data) {
     // 5 groups with 4 bits each
     uint8_t val;
     for(uint8_t i = 0; i < 5; i++) {
@@ -155,8 +159,13 @@ static void decode_message_numeric(SubGhzProtocolDecoderPocsag* instance, uint32
             val += '0';
         else
             val = bcd_chars[val - 10];
+        if(furi_string_size(instance->msg) >= POCSAG_MAX_MESSAGE_CHARS) {
+            instance->overflowed = true;
+            return false;
+        }
         furi_string_push_back(instance->msg, val);
     }
+    return true;
 }
 
 // decode message word, maintaining instance state for partial decoding. Return true if more data
@@ -168,14 +177,20 @@ static bool pocsag_decode_message_word(SubGhzProtocolDecoderPocsag* instance, ui
         return decode_message_alphanumeric(instance, data);
 
     case POCSAG_FUNC_NUM:
-        decode_message_numeric(instance, data);
-        return true;
+        return decode_message_numeric(instance, data);
     }
     return false;
 }
 
 // Function called when current message got decoded, but other messages might follow
-static void pocsag_message_done(SubGhzProtocolDecoderPocsag* instance) {
+static bool pocsag_message_done(SubGhzProtocolDecoderPocsag* instance) {
+    const size_t required =
+        furi_string_size(instance->done_msg) + furi_string_size(instance->msg) + 1U;
+    if(required > POCSAG_MAX_MESSAGE_CHARS) {
+        instance->overflowed = true;
+        return false;
+    }
+
     // append the message to the long-term storage string
     furi_string_printf(
         instance->generic.result_ric,
@@ -189,12 +204,13 @@ static void pocsag_message_done(SubGhzProtocolDecoderPocsag* instance) {
 
     furi_string_cat_str(instance->done_msg, " ");
 
-    furi_string_cat(instance->generic.result_msg, instance->done_msg);
+    furi_string_set(instance->generic.result_msg, instance->done_msg);
 
     // reset the state
     instance->char_bits = 0;
     instance->char_data = 0;
     furi_string_reset(instance->msg);
+    return true;
 }
 
 void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t duration) {
@@ -248,7 +264,7 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
         return;
     }
 
-    int bits_count = duration / instance->pocsag_timing->te_short;
+    uint32_t bits_count = duration / instance->pocsag_timing->te_short;
     uint32_t extra = duration - instance->pocsag_timing->te_short * bits_count;
 
     if(DURATION_DIFF(extra, instance->pocsag_timing->te_short) < instance->pocsag_timing->te_delta)
@@ -259,6 +275,11 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
             if(instance->base.callback)
                 instance->base.callback(&instance->base, instance->base.context);
         }
+        subghz_protocol_decoder_pocsag_reset(context);
+        return;
+    }
+
+    if(bits_count > POCSAG_MAX_RUN_BITS) {
         subghz_protocol_decoder_pocsag_reset(context);
         return;
     }
@@ -309,7 +330,10 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
                     // Idle during the message stops the message
                     instance->codeword_idx++;
                     instance->decoder.parser_step = PocsagDecoderStepFoundPreamble;
-                    pocsag_message_done(instance);
+                    if(!pocsag_message_done(instance)) {
+                        subghz_protocol_decoder_pocsag_reset(context);
+                        return;
+                    }
                     break;
                 case POCSAG_FRAME_SYNC_CODE:
                     instance->codeword_idx = 0;
@@ -317,12 +341,22 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
                 default:
                     // In this state, both address and message words can arrive
                     if(codeword >> 31 == 0) {
-                        pocsag_message_done(instance);
+                        if(!pocsag_message_done(instance)) {
+                            subghz_protocol_decoder_pocsag_reset(context);
+                            return;
+                        }
                         pocsag_decode_address_word(instance, codeword);
                     } else {
                         if(!pocsag_decode_message_word(instance, codeword)) {
+                            if(instance->overflowed) {
+                                subghz_protocol_decoder_pocsag_reset(context);
+                                return;
+                            }
                             instance->decoder.parser_step = PocsagDecoderStepFoundPreamble;
-                            pocsag_message_done(instance);
+                            if(!pocsag_message_done(instance)) {
+                                subghz_protocol_decoder_pocsag_reset(context);
+                                return;
+                            }
                         }
                     }
                     instance->codeword_idx++;
@@ -393,17 +427,25 @@ SubGhzProtocolStatus
             FURI_LOG_E(TAG, "Missing MsgLen");
             break;
         }
+        if(msg_len > POCSAG_MAX_MESSAGE_CHARS) {
+            FURI_LOG_E(TAG, "Message too large");
+            break;
+        }
         //optional, so compatible backwards
         instance->version = 1200;
         flipper_format_read_uint32(flipper_format, "PocsagVer", &instance->version, 1);
 
-        buf = malloc(msg_len);
-        if(!flipper_format_read_hex(flipper_format, "Msg", buf, msg_len)) {
+        buf = msg_len ? malloc(msg_len) : NULL;
+        if(msg_len && !flipper_format_read_hex(flipper_format, "Msg", buf, msg_len)) {
             FURI_LOG_E(TAG, "Missing Msg");
             free(buf);
             break;
         }
-        furi_string_set_strn(instance->done_msg, (const char*)buf, msg_len);
+        if(msg_len) {
+            furi_string_set_strn(instance->done_msg, (const char*)buf, msg_len);
+        } else {
+            furi_string_reset(instance->done_msg);
+        }
         free(buf);
 
         ret = SubGhzProtocolStatusOk;

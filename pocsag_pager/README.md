@@ -5,17 +5,28 @@ Plugin based on [Weather Station](https://github.com/flipperdevices/flipperzero-
 
 Icons by @Svaarich
 
-Includes two FM presets built into the app:
+Includes four FM presets built into the app:
 
 - `FM95` for POCSAG reception
 - `FLEX` for asynchronous two-level FLEX reception with approximately +/-4.76 kHz deviation
+- `FLEX4-3200` for 3200-bit/s four-level FLEX reception
+- `FLEX4-6400` for 6400-bit/s four-level FLEX reception
 
 The app supports POCSAG 512, POCSAG 1200, POCSAG 2400, FLEX 1600/2,
-and FLEX 3200/2 decoding on CC1101-supported frequencies.
+FLEX 3200/2, FLEX 3200/4, and FLEX 6400/4 decoding on CC1101-supported
+frequencies.
 
-FLEX 3200/4 and FLEX 6400/4 are not supported because the current CC1101
-asynchronous receive path exposes a two-level digital stream rather than all
-four discriminator levels.
+Use `FLEX` for 1600/2 and 3200/2 signals. Four-level reception requires a
+separate radio preset for each bit rate because the CC1101 hard-decision
+demodulator must be programmed for the transmitted rate. Use `FLEX4-3200` for
+3200/4 and `FLEX4-6400` for 6400/4. These presets sample the CC1101 GDO0 and
+GDO1 pins directly, so RSSI display and frequency hopping are disabled while
+they are active. External modules must expose GDO1 on the SPI MISO pin, as
+standard CC1101 modules do.
+
+Malformed or incomplete frames are discarded. Message fields, run lengths,
+history, and the four-level sample queue are bounded so noise cannot grow memory
+usage without limit.
 
 The FLEX framing, BCH correction, deinterleaving, and message parsing are based
 on the GPL-licensed [multimon-ng FLEX decoder](https://github.com/EliasOenal/multimon-ng/blob/master/demod_flex.c).

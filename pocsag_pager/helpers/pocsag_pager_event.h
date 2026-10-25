@@ -5,6 +5,9 @@ typedef enum {
     PCSGCustomEventStartId = 100,
 
     PCSGCustomEventSceneSettingLock,
+    PCSGCustomEventSceneSettingCapcodeMin,
+    PCSGCustomEventSceneSettingCapcodeMax,
+    PCSGCustomEventSceneCapcodeInputDone,
 
     PCSGCustomEventViewReceiverOK,
     PCSGCustomEventViewReceiverConfig,

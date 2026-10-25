@@ -112,3 +112,42 @@ int flex_bch_correct(uint32_t* codeword) {
     *codeword ^= error;
     return flex_bch_popcount(error);
 }
+
+bool flex_bch_combine(uint32_t first, uint32_t second, uint32_t* codeword) {
+    flex_bch_init();
+    first &= 0x7FFFFFFFU;
+    second &= 0x7FFFFFFFU;
+
+    // Exactly one copy is wrong wherever the two differ. Try every assignment
+    // of those bits and keep codewords that need no change where the copies
+    // agree. Each copy alone was uncorrectable (3+ errors), so two copies with
+    // disjoint errors differ in 6+ bits; the cap keeps the chance of a wrong
+    // codeword landing in the search space low.
+    const uint32_t differ = first ^ second;
+    const uint8_t count = flex_bch_popcount(differ);
+    if(count == 0 || count > FLEX_BCH_COMBINE_MAX_BITS) return false;
+
+    uint8_t positions[FLEX_BCH_COMBINE_MAX_BITS];
+    uint32_t remaining = differ;
+    for(uint8_t i = 0; i < count; i++) {
+        positions[i] = flex_bch_ctz(remaining);
+        remaining &= remaining - 1U;
+    }
+
+    bool found = false;
+    uint32_t best = 0;
+    for(uint32_t pattern = 0; pattern < (1UL << count); pattern++) {
+        uint32_t candidate = first;
+        for(uint8_t i = 0; i < count; i++) {
+            if(pattern & (1UL << i)) candidate ^= 1UL << positions[i];
+        }
+        if(flex_bch_correct(&candidate) < 0) continue;
+        if((candidate ^ first) & ~differ) continue;
+        if(found && candidate != best) return false;
+        found = true;
+        best = candidate;
+    }
+
+    if(found) *codeword = best;
+    return found;
+}

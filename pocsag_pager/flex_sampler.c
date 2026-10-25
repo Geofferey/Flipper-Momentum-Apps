@@ -1,0 +1,294 @@
+#include "flex_sampler.h"
+
+#include "protocols/flex.h"
+
+#include <furi.h>
+#include <furi_hal_bus.h>
+#include <furi_hal_interrupt.h>
+#include <furi_hal_resources.h>
+#include <stm32wbxx_ll_tim.h>
+
+#define TAG "FlexSampler"
+
+// 320 ms of samples: the decoder runs every page callback of a frame back to
+// back while the next frame's sync is already arriving.
+#define FLEX_SAMPLE_BUFFER_SIZE 8192U
+#define FLEX_SAMPLE_BUFFER_MASK (FLEX_SAMPLE_BUFFER_SIZE - 1U)
+#define FLEX_STATS_LOG_INTERVAL_MS 1000U
+
+// Debug aid: when non-zero, the first FLEX_CAPTURE_SECONDS of each receive
+// session are written to FLEX_CAPTURE_PATH as raw RX_HARD_DATA samples, four
+// 2-bit samples per byte with the earliest in the top bits, at
+// FLEX_4FSK_SAMPLE_RATE_HZ. Used to tune clock recovery against real signals.
+#ifndef FLEX_CAPTURE_SECONDS
+#define FLEX_CAPTURE_SECONDS 0U
+#endif
+
+#if FLEX_CAPTURE_SECONDS
+#include <storage/storage.h>
+
+#define FLEX_CAPTURE_PATH  EXT_PATH("apps_data/pocsag_pager/flex4_capture.bin")
+#define FLEX_CAPTURE_CHUNK 512U
+
+typedef struct {
+    Storage* storage;
+    File* file;
+    uint32_t remaining;
+    uint8_t packed;
+    uint8_t packed_count;
+    uint16_t length;
+    uint8_t chunk[FLEX_CAPTURE_CHUNK];
+} FlexCapture;
+
+static void flex_capture_open(FlexCapture* capture) {
+    memset(capture, 0, sizeof(FlexCapture));
+    capture->storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(capture->storage, EXT_PATH("apps_data/pocsag_pager"));
+    capture->file = storage_file_alloc(capture->storage);
+    if(storage_file_open(capture->file, FLEX_CAPTURE_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        capture->remaining = FLEX_CAPTURE_SECONDS * FLEX_4FSK_SAMPLE_RATE_HZ;
+        FURI_LOG_I("FlexSampler", "Capturing %us to %s", FLEX_CAPTURE_SECONDS, FLEX_CAPTURE_PATH);
+    } else {
+        FURI_LOG_E("FlexSampler", "Capture file open failed");
+    }
+}
+
+static void flex_capture_flush(FlexCapture* capture) {
+    if(capture->length) storage_file_write(capture->file, capture->chunk, capture->length);
+    capture->length = 0;
+}
+
+static void flex_capture_push(FlexCapture* capture, uint8_t sample) {
+    if(!capture->remaining) return;
+    capture->packed = (capture->packed << 2) | (sample & 0x03U);
+    if(++capture->packed_count == 4U) {
+        capture->chunk[capture->length++] = capture->packed;
+        capture->packed_count = 0;
+        if(capture->length == FLEX_CAPTURE_CHUNK) flex_capture_flush(capture);
+    }
+    if(--capture->remaining == 0) {
+        flex_capture_flush(capture);
+        storage_file_close(capture->file);
+        FURI_LOG_I("FlexSampler", "Capture complete");
+    }
+}
+
+static void flex_capture_close(FlexCapture* capture) {
+    if(capture->remaining) {
+        flex_capture_flush(capture);
+        storage_file_close(capture->file);
+    }
+    storage_file_free(capture->file);
+    furi_record_close(RECORD_STORAGE);
+}
+#endif
+
+struct FlexSampler {
+    FuriThread* thread;
+    SubGhzProtocolDecoderBase* decoder;
+    const GpioPin* data_msb;
+    const GpioPin* data_lsb;
+    volatile bool running;
+    volatile bool overrun;
+    volatile uint16_t head;
+    volatile uint16_t tail;
+    volatile uint32_t sample_count;
+    volatile uint32_t dropped_samples;
+    volatile uint32_t symbol_count[4];
+    uint32_t transition_count;
+    uint8_t last_symbol;
+    bool last_symbol_valid;
+    uint8_t samples[FLEX_SAMPLE_BUFFER_SIZE];
+};
+
+static void flex_sampler_timer_isr(void* context) {
+    FlexSampler* instance = context;
+    const uint16_t next = (instance->head + 1U) & FLEX_SAMPLE_BUFFER_MASK;
+    if(next == instance->tail) {
+        instance->overrun = true;
+        instance->dropped_samples++;
+    } else {
+        const uint8_t sample =
+            (furi_hal_gpio_read(instance->data_msb) ? 2U : 0U) |
+            (furi_hal_gpio_read(instance->data_lsb) ? 1U : 0U);
+        instance->samples[instance->head] = sample;
+        instance->sample_count++;
+        instance->symbol_count[sample]++;
+        instance->head = next;
+    }
+    LL_TIM_ClearFlag_UPDATE(TIM2);
+}
+
+static int32_t flex_sampler_thread(void* context) {
+    FlexSampler* instance = context;
+    uint32_t last_log_tick = furi_get_tick();
+#if FLEX_CAPTURE_SECONDS
+    FlexCapture* capture = malloc(sizeof(FlexCapture));
+    flex_capture_open(capture);
+#endif
+    while(instance->running) {
+        if(instance->overrun) {
+            FURI_CRITICAL_ENTER();
+            instance->tail = instance->head;
+            instance->overrun = false;
+            FURI_CRITICAL_EXIT();
+            instance->decoder->protocol->decoder->reset(instance->decoder);
+        }
+
+        bool processed = false;
+        while(instance->tail != instance->head) {
+            const uint8_t sample = instance->samples[instance->tail];
+            instance->tail = (instance->tail + 1U) & FLEX_SAMPLE_BUFFER_MASK;
+            if(instance->last_symbol_valid && sample != instance->last_symbol) {
+                instance->transition_count++;
+            }
+            instance->last_symbol = sample;
+            instance->last_symbol_valid = true;
+#if FLEX_CAPTURE_SECONDS
+            flex_capture_push(capture, sample);
+#endif
+            subghz_protocol_decoder_flex_feed_4fsk_sample(instance->decoder, sample);
+            processed = true;
+        }
+
+        const uint32_t now = furi_get_tick();
+        if(now - last_log_tick >= furi_ms_to_ticks(FLEX_STATS_LOG_INTERVAL_MS)) {
+            FlexDecoderStats decoder_stats;
+            subghz_protocol_decoder_flex_get_stats(instance->decoder, &decoder_stats);
+            FURI_LOG_I(
+                TAG,
+                "n=%lu h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu frame=%lu page=%lu fix=%lu",
+                instance->sample_count,
+                instance->symbol_count[0],
+                instance->symbol_count[1],
+                instance->symbol_count[2],
+                instance->symbol_count[3],
+                instance->transition_count,
+                instance->dropped_samples,
+                decoder_stats.sync_detected,
+                decoder_stats.fiw_valid,
+                decoder_stats.fiw_invalid,
+                decoder_stats.frames_completed,
+                decoder_stats.pages_decoded,
+                decoder_stats.pages_repaired);
+            // Where pages are lost: word error rate, then each drop reason.
+            FURI_LOG_I(
+                TAG,
+                "words=%lu bad=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu",
+                decoder_stats.words_total,
+                decoder_stats.words_bad,
+                decoder_stats.phases_bad_biw,
+                decoder_stats.pages_bad_header,
+                decoder_stats.pages_long_address,
+                decoder_stats.pages_incomplete);
+            FURI_LOG_I(
+                TAG,
+                "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu",
+                decoder_stats.words_bad_phase[0],
+                decoder_stats.words_bad_phase[1],
+                decoder_stats.words_bad_phase[2],
+                decoder_stats.words_bad_phase[3],
+                decoder_stats.pages_short_instruction,
+                decoder_stats.pages_bad_range,
+                decoder_stats.pages_parse_failed);
+            last_log_tick = now;
+        }
+        if(!processed) furi_delay_tick(1);
+    }
+#if FLEX_CAPTURE_SECONDS
+    flex_capture_close(capture);
+    free(capture);
+#endif
+    return 0;
+}
+
+static void flex_sampler_timer_start(FlexSampler* instance) {
+    furi_hal_bus_enable(FuriHalBusTIM2);
+
+    // 64 MHz timer clock divided down to FLEX_4FSK_SAMPLE_RATE_HZ.
+    LL_TIM_InitTypeDef timer_config = {
+        .Prescaler = 0,
+        .CounterMode = LL_TIM_COUNTERMODE_UP,
+        .Autoreload = (64000000U / FLEX_4FSK_SAMPLE_RATE_HZ) - 1U,
+    };
+    LL_TIM_Init(TIM2, &timer_config);
+    LL_TIM_SetClockSource(TIM2, LL_TIM_CLOCKSOURCE_INTERNAL);
+    LL_TIM_DisableCounter(TIM2);
+    LL_TIM_SetCounter(TIM2, 0);
+    LL_TIM_ClearFlag_UPDATE(TIM2);
+    furi_hal_interrupt_set_isr(FuriHalInterruptIdTIM2, flex_sampler_timer_isr, instance);
+    LL_TIM_EnableIT_UPDATE(TIM2);
+    LL_TIM_EnableCounter(TIM2);
+}
+
+static void flex_sampler_timer_stop(void) {
+    FURI_CRITICAL_ENTER();
+    LL_TIM_DisableCounter(TIM2);
+    LL_TIM_DisableIT_UPDATE(TIM2);
+    furi_hal_interrupt_set_isr(FuriHalInterruptIdTIM2, NULL, NULL);
+    furi_hal_bus_disable(FuriHalBusTIM2);
+    FURI_CRITICAL_EXIT();
+}
+
+FlexSampler* flex_sampler_alloc(
+    SubGhzProtocolDecoderBase* decoder,
+    const SubGhzDevice* radio_device,
+    bool external_radio) {
+    furi_assert(decoder);
+    furi_assert(radio_device);
+
+    FlexSampler* instance = calloc(1, sizeof(FlexSampler));
+    instance->decoder = decoder;
+    instance->data_msb = subghz_devices_get_data_gpio(radio_device);
+    instance->data_lsb = external_radio ? &gpio_ext_pa6 : &gpio_spi_r_miso;
+    instance->thread =
+        furi_thread_alloc_ex("Flex4Sampler", 4096, flex_sampler_thread, instance);
+    furi_thread_set_priority(instance->thread, FuriThreadPriorityHigh);
+    return instance;
+}
+
+void flex_sampler_free(FlexSampler* instance) {
+    furi_assert(instance);
+    if(instance->running) flex_sampler_stop(instance);
+    furi_thread_free(instance->thread);
+    free(instance);
+}
+
+void flex_sampler_start(FlexSampler* instance) {
+    furi_assert(instance);
+    furi_assert(!instance->running);
+
+    instance->head = 0;
+    instance->tail = 0;
+    instance->overrun = false;
+    instance->sample_count = 0;
+    instance->dropped_samples = 0;
+    memset((void*)instance->symbol_count, 0, sizeof(instance->symbol_count));
+    instance->transition_count = 0;
+    instance->last_symbol = 0;
+    instance->last_symbol_valid = false;
+    subghz_protocol_decoder_flex_reset_stats(instance->decoder);
+    instance->decoder->protocol->decoder->reset(instance->decoder);
+    furi_hal_gpio_init(instance->data_msb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
+    furi_hal_gpio_init(instance->data_lsb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
+
+    instance->running = true;
+    furi_thread_start(instance->thread);
+    flex_sampler_timer_start(instance);
+}
+
+void flex_sampler_stop(FlexSampler* instance) {
+    furi_assert(instance);
+    if(!instance->running) return;
+
+    flex_sampler_timer_stop();
+    instance->running = false;
+    furi_thread_join(instance->thread);
+    instance->head = 0;
+    instance->tail = 0;
+}
+
+bool flex_sampler_is_running(const FlexSampler* instance) {
+    furi_assert(instance);
+    return instance->running;
+}

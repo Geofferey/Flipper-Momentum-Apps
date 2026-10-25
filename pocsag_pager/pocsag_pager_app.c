@@ -4,6 +4,7 @@
 #include <furi_hal.h>
 #include <lib/flipper_format/flipper_format.h>
 #include "protocols/protocol_items.h"
+#include "protocols/flex.h"
 
 static bool pocsag_pager_app_custom_event_callback(void* context, uint32_t event) {
     furi_assert(context);
@@ -24,7 +25,7 @@ static void pocsag_pager_app_tick_event_callback(void* context) {
 }
 
 POCSAGPagerApp* pocsag_pager_app_alloc() {
-    POCSAGPagerApp* app = malloc(sizeof(POCSAGPagerApp));
+    POCSAGPagerApp* app = calloc(1, sizeof(POCSAGPagerApp));
 
     // GUI
     app->gui = furi_record_open(RECORD_GUI);
@@ -32,7 +33,6 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     // View Dispatcher
     app->view_dispatcher = view_dispatcher_alloc();
     app->scene_manager = scene_manager_alloc(&pocsag_pager_scene_handlers, app);
-    
 
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
     view_dispatcher_set_custom_event_callback(
@@ -64,6 +64,13 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     view_dispatcher_add_view(
         app->view_dispatcher, POCSAGPagerViewWidget, widget_get_view(app->widget));
 
+    // Number Input
+    app->number_input = number_input_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        POCSAGPagerViewNumberInput,
+        number_input_get_view(app->number_input));
+
     // Receiver
     app->pcsg_receiver = pcsg_view_receiver_alloc();
     view_dispatcher_add_view(
@@ -87,8 +94,8 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
 
     //init Worker & Protocol & History
     app->lock = PCSGLockOff;
-    app->txrx = malloc(sizeof(POCSAGPagerTxRx));
-    app->txrx->preset = malloc(sizeof(SubGhzRadioPreset));
+    app->txrx = calloc(1, sizeof(POCSAGPagerTxRx));
+    app->txrx->preset = calloc(1, sizeof(SubGhzRadioPreset));
     app->txrx->preset->name = furi_string_alloc();
 
     furi_hal_power_suppress_charge_enter();
@@ -122,17 +129,50 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     subghz_setting_load_custom_preset(app->setting, (const char*)"FLEX", temp_flex_preset);
     flipper_format_free(temp_flex_preset);
 
+    FlipperFormat* temp_flex4_preset = flipper_format_string_alloc();
+    flipper_format_write_string_cstr(
+        temp_flex4_preset,
+        (const char*)"Custom_preset_data",
+        (const char*)"02 16 01 17 0B 06 08 32 07 04 14 00 13 02 12 40 11 02 10 F7 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
+    flipper_format_rewind(temp_flex4_preset);
+    subghz_setting_load_custom_preset(
+        app->setting, (const char*)"FLEX4-3200", temp_flex4_preset);
+    flipper_format_free(temp_flex4_preset);
+
+    FlipperFormat* temp_flex4_6400_preset = flipper_format_string_alloc();
+    flipper_format_write_string_cstr(
+        temp_flex4_6400_preset,
+        (const char*)"Custom_preset_data",
+        (const char*)"02 16 01 17 0B 06 08 32 07 04 14 00 13 02 12 40 11 02 10 F8 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
+    flipper_format_rewind(temp_flex4_6400_preset);
+    subghz_setting_load_custom_preset(
+        app->setting, (const char*)"FLEX4-6400", temp_flex4_6400_preset);
+    flipper_format_free(temp_flex4_6400_preset);
+
     // custom presets loading - end
 
     pcsg_preset_init(app, "FM95", 439987500, NULL, 0);
 
     app->txrx->hopper_state = PCSGHopperStateOFF;
+    app->filter.type_filter = PCSGTypeFilterAll;
+    app->filter.show_binary = true;
+    app->filter.capcode_filter = PCSGCapcodeFilterOff;
+    app->filter.hide_duplicates = true;
+    pcsg_settings_load(app);
+
     app->txrx->history = pcsg_history_alloc();
     app->txrx->worker = subghz_worker_alloc();
     app->txrx->environment = subghz_environment_alloc();
     subghz_environment_set_protocol_registry(
         app->txrx->environment, (void*)&pocsag_pager_protocol_registry);
     app->txrx->receiver = subghz_receiver_alloc_init(app->txrx->environment);
+    SubGhzProtocolDecoderBase* flex_decoder = subghz_receiver_search_decoder_base_by_name(
+        app->txrx->receiver, SUBGHZ_PROTOCOL_FLEX_NAME);
+    furi_check(flex_decoder);
+    app->txrx->flex_sampler = flex_sampler_alloc(
+        flex_decoder,
+        app->txrx->radio_device,
+        radio_device_loader_is_external(app->txrx->radio_device));
 
     subghz_receiver_set_filter(app->txrx->receiver, SubGhzProtocolFlag_Decodable);
     subghz_worker_set_overrun_callback(
@@ -150,7 +190,8 @@ void pocsag_pager_app_free(POCSAGPagerApp* app) {
     furi_assert(app);
 
     // Radio Devices sleep & off
-    pcsg_sleep(app);
+    if(app->txrx->txrx_state == PCSGTxRxStateRx) pcsg_rx_end(app);
+    if(app->txrx->txrx_state != PCSGTxRxStateSleep) pcsg_sleep(app);
     radio_device_loader_end(app->txrx->radio_device);
 
     subghz_devices_deinit();
@@ -167,6 +208,10 @@ void pocsag_pager_app_free(POCSAGPagerApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, POCSAGPagerViewWidget);
     widget_free(app->widget);
 
+    // Number Input
+    view_dispatcher_remove_view(app->view_dispatcher, POCSAGPagerViewNumberInput);
+    number_input_free(app->number_input);
+
     // Receiver
     view_dispatcher_remove_view(app->view_dispatcher, POCSAGPagerViewReceiver);
     pcsg_view_receiver_free(app->pcsg_receiver);
@@ -179,6 +224,7 @@ void pocsag_pager_app_free(POCSAGPagerApp* app) {
     subghz_setting_free(app->setting);
 
     //Worker & Protocol & History
+    flex_sampler_free(app->txrx->flex_sampler);
     subghz_receiver_free(app->txrx->receiver);
     subghz_environment_free(app->txrx->environment);
     pcsg_history_free(app->txrx->history);
