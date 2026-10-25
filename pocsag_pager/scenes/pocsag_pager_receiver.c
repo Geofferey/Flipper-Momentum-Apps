@@ -117,8 +117,9 @@ void pocsag_pager_scene_receiver_on_enter(void* context) {
     // Frequency hopping and RSSI reads use SPI and would corrupt those samples.
     if(flex4) app->txrx->hopper_state = PCSGHopperStateOFF;
 
+    // A new session keeps the frequency, preset and hopping chosen in Config
+    // (and restored from settings at startup).
     if(app->txrx->rx_key_state == PCSGRxKeyStateIDLE) {
-        pcsg_preset_init(app, "FM95", 439987500, NULL, 0);
         pcsg_history_reset(app->txrx->history);
         app->txrx->rx_key_state = PCSGRxKeyStateStart;
     }
@@ -172,14 +173,13 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
                 pcsg_rx_end(app);
                 pcsg_idle(app);
             };
-            app->txrx->hopper_state = PCSGHopperStateOFF;
+            // Frequency, preset and hopping stay as chosen for the next session.
             app->txrx->idx_menu_chosen = 0;
             subghz_receiver_set_rx_callback(app->txrx->receiver, NULL, app);
 
             app->txrx->rx_key_state = PCSGRxKeyStateIDLE;
             // Close the session log and release its index; it is on SD now.
             pcsg_history_reset(app->txrx->history);
-            pcsg_preset_init(app, "FM95", 439987500, NULL, 0);
             scene_manager_search_and_switch_to_previous_scene(
                 app->scene_manager, POCSAGPagerSceneStart);
             consumed = true;
