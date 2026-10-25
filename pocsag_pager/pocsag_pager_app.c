@@ -207,6 +207,9 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     // Received messages are third-party traffic: keep nothing on SD unless
     // the user chooses Save.
     app->filter.log_temp = true;
+    app->filter.tone_volume = PCSGToneVolumeMedium;
+    app->filter.tone_pitch = PCSGTonePitchMedium;
+    app->filter.tone_spread = PCSGToneSpreadNormal;
     pcsg_settings_load(app);
 
     app->txrx->history = pcsg_history_alloc();

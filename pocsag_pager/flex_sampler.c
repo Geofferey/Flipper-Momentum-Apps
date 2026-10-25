@@ -6,6 +6,7 @@
 #include <furi_hal_bus.h>
 #include <furi_hal_interrupt.h>
 #include <furi_hal_resources.h>
+#include <furi_hal_speaker.h>
 #include <stm32wbxx_ll_tim.h>
 
 #define TAG "FlexSampler"
@@ -101,9 +102,17 @@ struct FlexSampler {
     // Allocated only while receiving. 2-bit samples packed four per byte,
     // earliest in the top bits.
     uint8_t* samples;
-    // When set, the upper decision bit is mirrored to this pin (the speaker).
-    const GpioPin* volatile speaker;
+    // Signal sound, see flex_sampler_set_sound().
+    volatile FlexSamplerSound sound;
+    const GpioPin* volatile sound_pin;
+    float sound_volume;
+    // Tone mode pitch per signal level, lowest frequency first.
+    float sound_tones[4];
+    uint8_t sound_level;
 };
+
+// RX_HARD_DATA symbol to level, as in the FLEX decoder.
+static const uint8_t flex_sampler_levels[] = {1U, 0U, 2U, 3U};
 
 static inline uint8_t flex_sampler_get(const uint8_t* samples, uint16_t index) {
     return (samples[index >> 2] >> ((3U - (index & 3U)) * 2U)) & 0x03U;
@@ -124,7 +133,16 @@ static void flex_sampler_timer_isr(void* context) {
         const uint8_t sample =
             (furi_hal_gpio_read(instance->data_msb) ? 2U : 0U) |
             (furi_hal_gpio_read(instance->data_lsb) ? 1U : 0U);
-        if(instance->speaker) furi_hal_gpio_write(instance->speaker, sample & 2U);
+        if(instance->sound == FlexSamplerSoundRaw) {
+            furi_hal_gpio_write(instance->sound_pin, sample & 2U);
+        } else if(instance->sound == FlexSamplerSoundTone) {
+            // Retune only when the level changes (at most at the symbol rate).
+            const uint8_t level = flex_sampler_levels[sample];
+            if(level != instance->sound_level) {
+                instance->sound_level = level;
+                furi_hal_speaker_start(instance->sound_tones[level], instance->sound_volume);
+            }
+        }
         flex_sampler_put(instance->samples, instance->head, sample);
         instance->sample_count++;
         instance->symbol_count[sample]++;
@@ -320,9 +338,20 @@ void flex_sampler_stop(FlexSampler* instance) {
     instance->tail = 0;
 }
 
-void flex_sampler_set_speaker(FlexSampler* instance, const GpioPin* speaker) {
+void flex_sampler_set_sound(
+    FlexSampler* instance,
+    FlexSamplerSound sound,
+    const GpioPin* pin,
+    float volume,
+    const float tones[4]) {
     furi_assert(instance);
-    instance->speaker = speaker;
+    furi_assert(sound != FlexSamplerSoundTone || tones);
+    instance->sound = FlexSamplerSoundOff;
+    instance->sound_pin = pin;
+    instance->sound_volume = volume;
+    if(tones) memcpy(instance->sound_tones, tones, sizeof(instance->sound_tones));
+    instance->sound_level = UINT8_MAX;
+    instance->sound = sound;
 }
 
 bool flex_sampler_is_running(const FlexSampler* instance) {

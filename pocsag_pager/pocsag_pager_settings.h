@@ -31,6 +31,39 @@ typedef enum {
     PCSGAlertCount,
 } PCSGAlert;
 
+/** Signal sound while receiving; saved as SignalSound (1 was the old "On"). */
+typedef enum {
+    PCSGSoundOff,
+    // The data line drives the speaker directly: the true signal, full volume.
+    PCSGSoundRaw,
+    // FLEX4 levels play as pitches at the tone volume; other presets use Raw.
+    PCSGSoundTone,
+    PCSGSoundCount,
+} PCSGSound;
+
+typedef enum {
+    PCSGToneVolumeLow,
+    PCSGToneVolumeMedium,
+    PCSGToneVolumeHigh,
+    PCSGToneVolumeCount,
+} PCSGToneVolume;
+
+/** Tone mode: lowest pitch (300, 600 or 1200 Hz). */
+typedef enum {
+    PCSGTonePitchLow,
+    PCSGTonePitchMedium,
+    PCSGTonePitchHigh,
+    PCSGTonePitchCount,
+} PCSGTonePitch;
+
+/** Tone mode: step between levels, a quarter, half or all of the lowest pitch. */
+typedef enum {
+    PCSGToneSpreadNarrow,
+    PCSGToneSpreadNormal,
+    PCSGToneSpreadWide,
+    PCSGToneSpreadCount,
+} PCSGToneSpread;
+
 typedef struct {
     PCSGTypeFilter type_filter;
     bool show_binary;
@@ -42,8 +75,10 @@ typedef struct {
     // Log to one temp file destroyed on exit instead of a kept log per session.
     bool log_temp;
     PCSGAlert alert;
-    // Play the received signal through the speaker while receiving.
-    bool signal_sound;
+    PCSGSound signal_sound;
+    PCSGToneVolume tone_volume;
+    PCSGTonePitch tone_pitch;
+    PCSGToneSpread tone_spread;
 } PCSGFilterSettings;
 
 typedef struct POCSAGPagerApp POCSAGPagerApp;

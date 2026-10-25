@@ -11,6 +11,9 @@ enum PCSGSettingIndex {
     PCSGSettingIndexLogging,
     PCSGSettingIndexAlert,
     PCSGSettingIndexSignalSound,
+    PCSGSettingIndexToneVolume,
+    PCSGSettingIndexTonePitch,
+    PCSGSettingIndexToneSpread,
     PCSGSettingIndexCapcodeFilter,
     PCSGSettingIndexCapcodeMin,
     PCSGSettingIndexCapcodeMax,
@@ -49,10 +52,28 @@ const char* const alert_text[PCSGAlertCount] = {
     "Off",
 };
 
-#define SIGNAL_SOUND_COUNT 2
-const char* const signal_sound_text[SIGNAL_SOUND_COUNT] = {
+const char* const signal_sound_text[PCSGSoundCount] = {
     "Off",
-    "On",
+    "Raw",
+    "Tone",
+};
+
+const char* const tone_volume_text[PCSGToneVolumeCount] = {
+    "Low",
+    "Medium",
+    "High",
+};
+
+const char* const tone_pitch_text[PCSGTonePitchCount] = {
+    "Low",
+    "Medium",
+    "High",
+};
+
+const char* const tone_spread_text[PCSGToneSpreadCount] = {
+    "Narrow",
+    "Normal",
+    "Wide",
 };
 
 const char* const capcode_filter_text[PCSGCapcodeFilterCount] = {
@@ -259,7 +280,31 @@ static void pocsag_pager_scene_receiver_config_set_signal_sound(VariableItem* it
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, signal_sound_text[index]);
-    app->filter.signal_sound = index == 1;
+    app->filter.signal_sound = index;
+    app->txrx->rx_restart = true;
+}
+
+static void pocsag_pager_scene_receiver_config_set_tone_volume(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, tone_volume_text[index]);
+    app->filter.tone_volume = index;
+    app->txrx->rx_restart = true;
+}
+
+static void pocsag_pager_scene_receiver_config_set_tone_pitch(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, tone_pitch_text[index]);
+    app->filter.tone_pitch = index;
+    app->txrx->rx_restart = true;
+}
+
+static void pocsag_pager_scene_receiver_config_set_tone_spread(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, tone_spread_text[index]);
+    app->filter.tone_spread = index;
     app->txrx->rx_restart = true;
 }
 
@@ -397,12 +442,38 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     item = variable_item_list_add(
         app->variable_item_list,
         "Signal Sound:",
-        SIGNAL_SOUND_COUNT,
+        PCSGSoundCount,
         pocsag_pager_scene_receiver_config_set_signal_sound,
         app);
-    value_index = app->filter.signal_sound ? 1 : 0;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, signal_sound_text[value_index]);
+    variable_item_set_current_value_index(item, app->filter.signal_sound);
+    variable_item_set_current_value_text(item, signal_sound_text[app->filter.signal_sound]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Tone Volume:",
+        PCSGToneVolumeCount,
+        pocsag_pager_scene_receiver_config_set_tone_volume,
+        app);
+    variable_item_set_current_value_index(item, app->filter.tone_volume);
+    variable_item_set_current_value_text(item, tone_volume_text[app->filter.tone_volume]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Tone Pitch:",
+        PCSGTonePitchCount,
+        pocsag_pager_scene_receiver_config_set_tone_pitch,
+        app);
+    variable_item_set_current_value_index(item, app->filter.tone_pitch);
+    variable_item_set_current_value_text(item, tone_pitch_text[app->filter.tone_pitch]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Tone Spread:",
+        PCSGToneSpreadCount,
+        pocsag_pager_scene_receiver_config_set_tone_spread,
+        app);
+    variable_item_set_current_value_index(item, app->filter.tone_spread);
+    variable_item_set_current_value_text(item, tone_spread_text[app->filter.tone_spread]);
 
     item = variable_item_list_add(
         app->variable_item_list,

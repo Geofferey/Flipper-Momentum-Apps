@@ -122,8 +122,20 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "Alert", &value, 1) && value < PCSGAlertCount) {
             filter->alert = value;
         }
-        if(flipper_format_read_uint32(file, "SignalSound", &value, 1)) {
-            filter->signal_sound = value != 0;
+        if(flipper_format_read_uint32(file, "SignalSound", &value, 1) && value < PCSGSoundCount) {
+            filter->signal_sound = value;
+        }
+        if(flipper_format_read_uint32(file, "ToneVolume", &value, 1) &&
+           value < PCSGToneVolumeCount) {
+            filter->tone_volume = value;
+        }
+        if(flipper_format_read_uint32(file, "TonePitch", &value, 1) &&
+           value < PCSGTonePitchCount) {
+            filter->tone_pitch = value;
+        }
+        if(flipper_format_read_uint32(file, "ToneSpread", &value, 1) &&
+           value < PCSGToneSpreadCount) {
+            filter->tone_spread = value;
         }
     } while(false);
 
@@ -170,6 +182,12 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "Alert", &value, 1)) break;
         value = filter->signal_sound;
         if(!flipper_format_write_uint32(file, "SignalSound", &value, 1)) break;
+        value = filter->tone_volume;
+        if(!flipper_format_write_uint32(file, "ToneVolume", &value, 1)) break;
+        value = filter->tone_pitch;
+        if(!flipper_format_write_uint32(file, "TonePitch", &value, 1)) break;
+        value = filter->tone_spread;
+        if(!flipper_format_write_uint32(file, "ToneSpread", &value, 1)) break;
         saved = true;
     } while(false);
 

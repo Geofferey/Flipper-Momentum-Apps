@@ -82,15 +82,32 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
     subghz_devices_flush_rx(app->txrx->radio_device);
     subghz_devices_set_rx(app->txrx->radio_device);
 
-    // Signal sound: mirror the received data to the speaker, as the Sub-GHz
-    // app does. FLEX4 has no async capture to mirror, so its sampler drives
-    // the pin.
+    // Signal sound. Raw mirrors the received data to the speaker pin, as the
+    // Sub-GHz app does; FLEX4 has no async capture to mirror, so its sampler
+    // drives the pin. Tone (FLEX4 only) plays each level as a pitch through
+    // the speaker's PWM, which has a volume; the async path cannot (its
+    // worker thread does not own the speaker) and falls back to Raw.
     const bool flex4 = pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name));
-    if(app->filter.signal_sound && furi_hal_speaker_acquire(30)) {
+    if(app->filter.signal_sound != PCSGSoundOff && furi_hal_speaker_acquire(30)) {
         app->txrx->speaker_on = true;
-        if(flex4) {
+        if(flex4 && app->filter.signal_sound == PCSGSoundTone) {
+            static const float volumes[PCSGToneVolumeCount] = {0.1f, 0.4f, 1.0f};
+            // Lowest pitch, and the step between levels as a share of it.
+            static const float bases[PCSGTonePitchCount] = {300.0f, 600.0f, 1200.0f};
+            static const float spreads[PCSGToneSpreadCount] = {0.25f, 0.5f, 1.0f};
+            const float base = bases[app->filter.tone_pitch];
+            const float step = base * spreads[app->filter.tone_spread];
+            const float tones[4] = {base, base + step, base + 2.0f * step, base + 3.0f * step};
+            flex_sampler_set_sound(
+                app->txrx->flex_sampler,
+                FlexSamplerSoundTone,
+                NULL,
+                volumes[app->filter.tone_volume],
+                tones);
+        } else if(flex4) {
             furi_hal_gpio_init(&gpio_speaker, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-            flex_sampler_set_speaker(app->txrx->flex_sampler, &gpio_speaker);
+            flex_sampler_set_sound(
+                app->txrx->flex_sampler, FlexSamplerSoundRaw, &gpio_speaker, 0.0f, NULL);
         } else {
             subghz_devices_set_async_mirror_pin(app->txrx->radio_device, &gpio_speaker);
         }
@@ -124,9 +141,12 @@ void pcsg_rx_end(POCSAGPagerApp* app) {
         subghz_devices_stop_async_rx(app->txrx->radio_device);
     }
     if(app->txrx->speaker_on) {
-        flex_sampler_set_speaker(app->txrx->flex_sampler, NULL);
+        flex_sampler_set_sound(app->txrx->flex_sampler, FlexSamplerSoundOff, NULL, 0.0f, NULL);
         subghz_devices_set_async_mirror_pin(app->txrx->radio_device, NULL);
-        if(furi_hal_speaker_is_mine()) furi_hal_speaker_release();
+        if(furi_hal_speaker_is_mine()) {
+            furi_hal_speaker_stop();
+            furi_hal_speaker_release();
+        }
         app->txrx->speaker_on = false;
     }
     subghz_devices_idle(app->txrx->radio_device);
