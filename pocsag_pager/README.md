@@ -6,6 +6,36 @@ Protocol implementation made by @Shmuma, 512 and 2400 speeds support by @htotoo.
 Plugin based on [Weather Station](https://github.com/flipperdevices/flipperzero-firmware/tree/dev/applications/plugins/weather_station) from OFW.
 Icons by @Svaarich.
 
+## Disclaimer
+
+This app is provided as is, without warranty, for education, research and
+receiving traffic you are authorized to receive. You are responsible for how
+you use it.
+
+**Frequency range.** The CC1101 is rated for 300-348, 387-464 and
+779-928 MHz. The US FLEX paging bands (929-932 MHz) are outside that range
+and only work with the firmware's extended frequency range enabled. Operation
+there is out of specification: sensitivity and stability are not
+guaranteed, and the extended range is unlocked at your own risk. This app
+only receives, but the extended range applies to the whole device;
+transmitting outside the bands the Flipper is certified and you are licensed
+for is illegal in most countries.
+
+**Intercepting pager traffic.** Pager messages are communications between
+other people. In the US, intercepting the contents of display pager messages
+is restricted by the Electronic Communications Privacy Act (18 U.S.C. 2511),
+and divulging or using intercepted radio communications by 47 U.S.C. 605;
+other countries have similar laws. Check what applies where you are before
+decoding anything.
+
+**Sensitive personal information.** Decoded messages and logs can contain
+personal and sensitive information, including names, phone numbers,
+addresses and medical or emergency details. Do not share, publish or upload
+received messages, screenshots or log files. Prefer Temp logging, which keeps
+nothing after the app exits. If you use Save, protect the SD card and delete
+logs you no longer need. Deleting a file does not reliably erase it from flash
+storage.
+
 ## Supported signals
 
 - POCSAG 512, 1200 and 2400
@@ -62,9 +92,8 @@ small index in RAM, so long sessions do not run out of memory.
   time and frequency, e.g. `2026-10-25_04-48-13_929.6125.txt`. One line per
   message: time, frequency, protocol, header and message, tab-separated.
 
-Received pager traffic belongs to other people. Check the law where you are
-(in the US, intercepting display pager messages falls under the ECPA) and do
-not share what you receive.
+Logs can contain other people's personal information; see the
+[Disclaimer](#disclaimer).
 
 ## Frequencies
 
@@ -77,7 +106,7 @@ paging channels:
 [RadioReference paging wiki](https://wiki.radioreference.com/index.php/Paging).
 
 They are above the CC1101's 928 MHz rating and only appear if the extended
-frequency range is enabled. An existing `settings.txt` is never overwritten;
+frequency range is enabled (see the [Disclaimer](#disclaimer)). An existing `settings.txt` is never overwritten;
 edit it to add your own `Frequency:` lines (in Hz, e.g. `Frequency: 929612500`),
 or delete it to get the defaults back. Custom frequencies appear at the end of
 the frequency list. See the Flipper

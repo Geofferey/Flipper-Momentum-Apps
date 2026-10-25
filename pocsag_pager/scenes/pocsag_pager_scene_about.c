@@ -26,7 +26,12 @@ void pocsag_pager_scene_about_on_enter(void* context) {
 
     furi_string_cat_printf(
         temp_str,
-        "Supported protocols:\nPOCSAG 512\nPOCSAG 1200\nPOCSAG 2400\nFLEX 1600/2\nFLEX 3200/2\nFLEX 3200/4\nFLEX 6400/4\n");
+        "Supported protocols:\nPOCSAG 512\nPOCSAG 1200\nPOCSAG 2400\nFLEX 1600/2\nFLEX 3200/2\nFLEX 3200/4\nFLEX 6400/4\n\n");
+
+    furi_string_cat_printf(temp_str, "\e#%s\n", "Disclaimer");
+    furi_string_cat_printf(
+        temp_str,
+        "Only receive traffic you are allowed to. Messages and logs can hold private info: do not share them.\n929-932 MHz is outside the CC1101's rated range: use at your own risk.\n");
 
     widget_add_text_box_element(
         app->widget,
