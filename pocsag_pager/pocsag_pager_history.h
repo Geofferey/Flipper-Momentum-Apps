@@ -7,6 +7,9 @@
 #include <lib/flipper_format/flipper_format.h>
 #include <lib/subghz/types.h>
 
+/** Entries kept in the on-screen list; every message is also logged to SD. */
+#define PCSG_HISTORY_MAX 300
+
 typedef struct PCSGHistory PCSGHistory;
 
 /** History state add key */
@@ -19,82 +22,59 @@ typedef enum {
 } PCSGHistoryStateAddKey;
 
 /** Allocate PCSGHistory
- * 
- * @return PCSGHistory* 
+ *
+ * @return PCSGHistory*
  */
 PCSGHistory* pcsg_history_alloc(void);
 
 /** Free PCSGHistory
- * 
+ *
  * @param instance - PCSGHistory instance
  */
 void pcsg_history_free(PCSGHistory* instance);
 
-/** Clear history
- * 
+/** Clear history and end the current log file; the next message starts a new one.
+ *
  * @param instance - PCSGHistory instance
  */
 void pcsg_history_reset(PCSGHistory* instance);
 
-/** Get frequency to history[idx]
- * 
+/** Get the number of entries in the list
+ *
  * @param instance  - PCSGHistory instance
- * @param idx       - record index  
- * @return frequency - frequency Hz
- */
-uint32_t pcsg_history_get_frequency(PCSGHistory* instance, uint16_t idx);
-
-SubGhzRadioPreset* pcsg_history_get_radio_preset(PCSGHistory* instance, uint16_t idx);
-
-/** Get preset to history[idx]
- * 
- * @param instance  - PCSGHistory instance
- * @param idx       - record index  
- * @return preset   - preset name
- */
-const char* pcsg_history_get_preset(PCSGHistory* instance, uint16_t idx);
-
-/** Get history index write 
- * 
- * @param instance  - PCSGHistory instance
- * @return idx      - current record index  
+ * @return count    - entries, oldest at index 0
  */
 uint16_t pcsg_history_get_item(PCSGHistory* instance);
 
+/** Whether the list is full, so the next message drops the oldest entry */
+bool pcsg_history_is_full(PCSGHistory* instance);
+
 /** Get type protocol to history[idx]
- * 
+ *
  * @param instance  - PCSGHistory instance
- * @param idx       - record index  
- * @return type      - type protocol  
+ * @param idx       - record index
+ * @return type      - type protocol
  */
 uint8_t pcsg_history_get_type_protocol(PCSGHistory* instance, uint16_t idx);
 
-/** Get name protocol to history[idx]
- * 
- * @param instance  - PCSGHistory instance
- * @param idx       - record index  
- * @return name      - const char* name protocol  
- */
-const char* pcsg_history_get_protocol_name(PCSGHistory* instance, uint16_t idx);
-
 /** Get string item menu to history[idx]
- * 
+ *
  * @param instance  - PCSGHistory instance
  * @param output    - FuriString* output
  * @param idx       - record index
  */
 void pcsg_history_get_text_item_menu(PCSGHistory* instance, FuriString* output, uint16_t idx);
 
-/** Get string the remaining number of records to history
- * 
+/** Get status bar text for the history
+ *
  * @param instance  - PCSGHistory instance
  * @param output    - FuriString* output
- * @return bool - is FUUL
+ * @return bool - is FULL; always false, the list rolls over instead
  */
 bool pcsg_history_get_text_space_left(PCSGHistory* instance, FuriString* output);
 
-/** Add protocol to history
- * 
+/** Add protocol to history and append it to the log file
+ *
  * @param instance  - PCSGHistory instance
  * @param context    - SubGhzProtocolCommon context
  * @param preset    - SubGhzRadioPreset preset
@@ -103,10 +83,11 @@ bool pcsg_history_get_text_space_left(PCSGHistory* instance, FuriString* output)
 PCSGHistoryStateAddKey
     pcsg_history_add_to_history(PCSGHistory* instance, void* context, SubGhzRadioPreset* preset);
 
-/** Get SubGhzProtocolCommonLoad to load into the protocol decoder bin data
- * 
+/** Read history[idx] back from the log file
+ *
  * @param instance  - PCSGHistory instance
  * @param idx       - record index
- * @return SubGhzProtocolCommonLoad*
+ * @return Protocol, Ric and Message as FlipperFormat, valid until the next
+ *         call, or NULL if the log could not be read
  */
 FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx);

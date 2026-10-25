@@ -31,10 +31,26 @@ void pcsg_view_receiver_add_data_statusbar(
     const char* preset_str,
     const char* history_stat_str);
 
-void pcsg_view_receiver_add_item_to_menu(
+/** Fills a list row's label and icon type; the view keeps no copies. */
+typedef void (*PCSGReceiverItemCallback)(
+    void* context,
+    uint16_t idx,
+    FuriString* label,
+    uint8_t* type);
+
+void pcsg_view_receiver_set_item_callback(
     PCSGReceiver* pcsg_receiver,
-    const char* name,
-    uint8_t type);
+    PCSGReceiverItemCallback callback,
+    void* context);
+
+/** Set the number of list rows, e.g. when re-entering the receiver. */
+void pcsg_view_receiver_set_item_count(PCSGReceiver* pcsg_receiver, uint16_t count);
+
+/**
+ * Account for one new row at the end of the list. With dropped_oldest the
+ * first row went away to make room, so the count stays the same.
+ */
+void pcsg_view_receiver_add_item(PCSGReceiver* pcsg_receiver, bool dropped_oldest);
 
 uint16_t pcsg_view_receiver_get_idx_menu(PCSGReceiver* pcsg_receiver);
 

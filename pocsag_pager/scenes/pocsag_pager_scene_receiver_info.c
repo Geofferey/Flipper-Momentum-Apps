@@ -1,5 +1,6 @@
 #include "../pocsag_pager_app_i.h"
 #include "../views/pocsag_pager_receiver.h"
+#include "../protocols/flex.h"
 
 void pocsag_pager_scene_receiver_info_callback(PCSGCustomEvent event, void* context) {
     furi_assert(context);
@@ -14,16 +15,19 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
     furi_assert(context);
     POCSAGPagerApp* app = context;
 
-    if(pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset) ==
-       PCSGHistoryStateAddKeyUpdateData) {
-        pcsg_view_receiver_info_update(
-            app->pcsg_receiver_info,
-            pcsg_history_get_raw_data(app->txrx->history, app->txrx->idx_menu_chosen));
-        subghz_receiver_reset(receiver);
-
-        notification_message(app->notifications, &sequence_blink_green_10);
-        app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
+    // Keep logging while a message is open. The list is rebuilt from history
+    // on return, so only the selection needs to follow a dropped oldest entry.
+    const bool flex = decoder_base->protocol == &subghz_protocol_flex;
+    if(pcsg_filter_accepts(&app->filter, decoder_base)) {
+        const bool dropped_oldest = pcsg_history_is_full(app->txrx->history);
+        if(pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset) ==
+           PCSGHistoryStateAddKeyNewDada) {
+            if(dropped_oldest && app->txrx->idx_menu_chosen) app->txrx->idx_menu_chosen--;
+            notification_message(app->notifications, &sequence_blink_green_10);
+            app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
+        }
     }
+    if(!flex) subghz_receiver_reset(receiver);
 }
 
 void pocsag_pager_scene_receiver_info_on_enter(void* context) {
@@ -31,9 +35,9 @@ void pocsag_pager_scene_receiver_info_on_enter(void* context) {
 
     subghz_receiver_set_rx_callback(
         app->txrx->receiver, pocsag_pager_scene_receiver_info_add_to_history_callback, app);
-    pcsg_view_receiver_info_update(
-        app->pcsg_receiver_info,
-        pcsg_history_get_raw_data(app->txrx->history, app->txrx->idx_menu_chosen));
+    FlipperFormat* entry =
+        pcsg_history_get_raw_data(app->txrx->history, app->txrx->idx_menu_chosen);
+    if(entry) pcsg_view_receiver_info_update(app->pcsg_receiver_info, entry);
     view_dispatcher_switch_to_view(app->view_dispatcher, POCSAGPagerViewReceiverInfo);
 }
 

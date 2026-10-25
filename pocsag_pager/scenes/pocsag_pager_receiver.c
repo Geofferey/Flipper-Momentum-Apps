@@ -80,20 +80,11 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
         return;
     }
 
-    FuriString* str_buff;
-    str_buff = furi_string_alloc();
-
+    const bool dropped_oldest = pcsg_history_is_full(app->txrx->history);
     if(pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset) ==
        PCSGHistoryStateAddKeyNewDada) {
-        furi_string_reset(str_buff);
-
-        pcsg_history_get_text_item_menu(
-            app->txrx->history, str_buff, pcsg_history_get_item(app->txrx->history) - 1);
-        pcsg_view_receiver_add_item_to_menu(
-            app->pcsg_receiver,
-            furi_string_get_cstr(str_buff),
-            pcsg_history_get_type_protocol(
-                app->txrx->history, pcsg_history_get_item(app->txrx->history) - 1));
+        pcsg_view_receiver_add_item(app->pcsg_receiver, dropped_oldest);
+        if(dropped_oldest && app->txrx->idx_menu_chosen) app->txrx->idx_menu_chosen--;
 
         pocsag_pager_scene_receiver_update_statusbar(app);
         notification_message(app->notifications, &sequence_blink_green_10);
@@ -104,8 +95,17 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
         }
     }
     if(!flex) subghz_receiver_reset(receiver);
-    furi_string_free(str_buff);
     app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
+}
+
+static void pocsag_pager_scene_receiver_item_callback(
+    void* context,
+    uint16_t idx,
+    FuriString* label,
+    uint8_t* type) {
+    POCSAGPagerApp* app = context;
+    pcsg_history_get_text_item_menu(app->txrx->history, label, idx);
+    *type = pcsg_history_get_type_protocol(app->txrx->history, idx);
 }
 
 void pocsag_pager_scene_receiver_on_enter(void* context) {
@@ -116,9 +116,6 @@ void pocsag_pager_scene_receiver_on_enter(void* context) {
     // FLEX4 uses the CC1101 MISO/GDO1 pin as a second hard-decision data bit.
     // Frequency hopping and RSSI reads use SPI and would corrupt those samples.
     if(flex4) app->txrx->hopper_state = PCSGHopperStateOFF;
-
-    FuriString* str_buff;
-    str_buff = furi_string_alloc();
 
     if(app->txrx->rx_key_state == PCSGRxKeyStateIDLE) {
         pcsg_preset_init(app, "FM95", 439987500, NULL, 0);
@@ -132,16 +129,10 @@ void pocsag_pager_scene_receiver_on_enter(void* context) {
 
     //Load history to receiver
     pcsg_view_receiver_exit(app->pcsg_receiver);
-    for(uint8_t i = 0; i < pcsg_history_get_item(app->txrx->history); i++) {
-        furi_string_reset(str_buff);
-        pcsg_history_get_text_item_menu(app->txrx->history, str_buff, i);
-        pcsg_view_receiver_add_item_to_menu(
-            app->pcsg_receiver,
-            furi_string_get_cstr(str_buff),
-            pcsg_history_get_type_protocol(app->txrx->history, i));
-        app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
-    }
-    furi_string_free(str_buff);
+    pcsg_view_receiver_set_item_callback(
+        app->pcsg_receiver, pocsag_pager_scene_receiver_item_callback, app);
+    pcsg_view_receiver_set_item_count(app->pcsg_receiver, pcsg_history_get_item(app->txrx->history));
+    if(pcsg_history_get_item(app->txrx->history)) app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
     pocsag_pager_scene_receiver_update_statusbar(app);
 
     pcsg_view_receiver_set_callback(app->pcsg_receiver, pocsag_pager_scene_receiver_callback, app);

@@ -14,21 +14,6 @@
 
 #define SUBGHZ_RAW_THRESHOLD_MIN -90.0f
 
-typedef struct {
-    FuriString* item_str;
-    uint8_t type;
-} PCSGReceiverMenuItem;
-
-ARRAY_DEF(PCSGReceiverMenuItemArray, PCSGReceiverMenuItem, M_POD_OPLIST)
-
-#define M_OPL_PCSGReceiverMenuItemArray_t() ARRAY_OPLIST(PCSGReceiverMenuItemArray, M_POD_OPLIST)
-
-struct PCSGReceiverHistory {
-    PCSGReceiverMenuItemArray_t data;
-};
-
-typedef struct PCSGReceiverHistory PCSGReceiverHistory;
-
 static const Icon* ReceiverItemIcons[] = {
     [SubGhzProtocolTypeUnknown] = &I_Quest_7x8,
     [SubGhzProtocolTypeStatic] = &I_Message_8x7,
@@ -55,7 +40,8 @@ typedef struct {
     FuriString* frequency_str;
     FuriString* preset_str;
     FuriString* history_stat_str;
-    PCSGReceiverHistory* history;
+    PCSGReceiverItemCallback item_callback;
+    void* item_context;
     uint16_t idx;
     uint16_t list_offset;
     uint16_t history_item;
@@ -137,24 +123,49 @@ static void pcsg_view_receiver_update_offset(PCSGReceiver* pcsg_receiver) {
         true);
 }
 
-void pcsg_view_receiver_add_item_to_menu(
+void pcsg_view_receiver_set_item_callback(
     PCSGReceiver* pcsg_receiver,
-    const char* name,
-    uint8_t type) {
+    PCSGReceiverItemCallback callback,
+    void* context) {
     furi_assert(pcsg_receiver);
     with_view_model(
         pcsg_receiver->view,
         PCSGReceiverModel * model,
         {
-            PCSGReceiverMenuItem* item_menu =
-                PCSGReceiverMenuItemArray_push_raw(model->history->data);
-            item_menu->item_str = furi_string_alloc_set(name);
-            item_menu->type = type;
-            if((model->idx == model->history_item - 1)) {
-                model->history_item++;
-                model->idx++;
+            model->item_callback = callback;
+            model->item_context = context;
+        },
+        false);
+}
+
+void pcsg_view_receiver_set_item_count(PCSGReceiver* pcsg_receiver, uint16_t count) {
+    furi_assert(pcsg_receiver);
+    with_view_model(
+        pcsg_receiver->view,
+        PCSGReceiverModel * model,
+        {
+            model->history_item = count;
+            if(model->idx >= count) model->idx = count ? count - 1 : 0;
+        },
+        true);
+    pcsg_view_receiver_update_offset(pcsg_receiver);
+}
+
+void pcsg_view_receiver_add_item(PCSGReceiver* pcsg_receiver, bool dropped_oldest) {
+    furi_assert(pcsg_receiver);
+    with_view_model(
+        pcsg_receiver->view,
+        PCSGReceiverModel * model,
+        {
+            // Follow new messages while the newest row is selected; otherwise
+            // keep the same message selected as rows shift up.
+            const bool at_end = model->history_item != 0 &&
+                                model->idx == model->history_item - 1;
+            if(dropped_oldest) {
+                if(!at_end && model->idx > 0) model->idx--;
             } else {
                 model->history_item++;
+                if(at_end) model->idx++;
             }
         },
         true);
@@ -214,12 +225,10 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
     FuriString* str_buff;
     str_buff = furi_string_alloc();
 
-    PCSGReceiverMenuItem* item_menu;
-
-    for(size_t i = 0; i < MIN(model->history_item, MENU_ITEMS); ++i) {
+    for(size_t i = 0; i < MIN(model->history_item, MENU_ITEMS) && model->item_callback; ++i) {
         size_t idx = CLAMP((uint16_t)(i + model->list_offset), model->history_item, 0);
-        item_menu = PCSGReceiverMenuItemArray_get(model->history->data, idx);
-        furi_string_set(str_buff, item_menu->item_str);
+        uint8_t type = 0;
+        model->item_callback(model->item_context, idx, str_buff, &type);
         furi_string_replace_all(str_buff, "#", "");
         elements_string_fit_width(canvas, str_buff, scrollbar ? MAX_LEN_PX - 7 : MAX_LEN_PX);
         if(model->idx == idx) {
@@ -227,7 +236,8 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
         } else {
             canvas_set_color(canvas, ColorBlack);
         }
-        canvas_draw_icon(canvas, 4, 2 + i * FRAME_HEIGHT, ReceiverItemIcons[item_menu->type]);
+        if(type >= COUNT_OF(ReceiverItemIcons)) type = 0;
+        canvas_draw_icon(canvas, 4, 2 + i * FRAME_HEIGHT, ReceiverItemIcons[type]);
         canvas_draw_str(canvas, 15, 9 + i * FRAME_HEIGHT, furi_string_get_cstr(str_buff));
         furi_string_reset(str_buff);
     }
@@ -381,15 +391,9 @@ void pcsg_view_receiver_exit(void* context) {
             furi_string_reset(model->frequency_str);
             furi_string_reset(model->preset_str);
             furi_string_reset(model->history_stat_str);
-                for
-                    M_EACH(item_menu, model->history->data, PCSGReceiverMenuItemArray_t) {
-                        furi_string_free(item_menu->item_str);
-                        item_menu->type = 0;
-                    }
-                PCSGReceiverMenuItemArray_reset(model->history->data);
-                model->idx = 0;
-                model->list_offset = 0;
-                model->history_item = 0;
+            model->idx = 0;
+            model->list_offset = 0;
+            model->history_item = 0;
         },
         false);
     furi_timer_stop(pcsg_receiver->timer);
@@ -418,8 +422,6 @@ PCSGReceiver* pcsg_view_receiver_alloc() {
             model->preset_str = furi_string_alloc();
             model->history_stat_str = furi_string_alloc();
             model->bar_show = PCSGReceiverBarShowDefault;
-            model->history = malloc(sizeof(PCSGReceiverHistory));
-            PCSGReceiverMenuItemArray_init(model->history->data);
         },
         true);
     pcsg_receiver->timer =
@@ -437,13 +439,6 @@ void pcsg_view_receiver_free(PCSGReceiver* pcsg_receiver) {
             furi_string_free(model->frequency_str);
             furi_string_free(model->preset_str);
             furi_string_free(model->history_stat_str);
-                for
-                    M_EACH(item_menu, model->history->data, PCSGReceiverMenuItemArray_t) {
-                        furi_string_free(item_menu->item_str);
-                        item_menu->type = 0;
-                    }
-                PCSGReceiverMenuItemArray_clear(model->history->data);
-                free(model->history);
         },
         false);
     furi_timer_free(pcsg_receiver->timer);

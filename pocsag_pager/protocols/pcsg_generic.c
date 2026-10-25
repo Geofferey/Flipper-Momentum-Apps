@@ -23,6 +23,60 @@ void pcsg_block_generic_get_preset_name(const char* preset_name, FuriString* pre
     furi_string_set(preset_str, preset_name_temp);
 }
 
+void pcsg_block_generic_escape(FuriString* output, const char* input) {
+    furi_string_reset(output);
+    for(; *input; input++) {
+        switch(*input) {
+        case '\\':
+            furi_string_cat_str(output, "\\\\");
+            break;
+        case '\n':
+            furi_string_cat_str(output, "\\n");
+            break;
+        case '\r':
+            furi_string_cat_str(output, "\\r");
+            break;
+        case '\t':
+            furi_string_cat_str(output, "\\t");
+            break;
+        case '\e':
+            furi_string_cat_str(output, "\\e");
+            break;
+        default:
+            furi_string_push_back(output, *input);
+            break;
+        }
+    }
+}
+
+void pcsg_block_generic_unescape(FuriString* output, const char* input) {
+    furi_string_reset(output);
+    for(; *input; input++) {
+        if(*input != '\\' || !input[1]) {
+            furi_string_push_back(output, *input);
+            continue;
+        }
+        input++;
+        switch(*input) {
+        case 'n':
+            furi_string_push_back(output, '\n');
+            break;
+        case 'r':
+            furi_string_push_back(output, '\r');
+            break;
+        case 't':
+            furi_string_push_back(output, '\t');
+            break;
+        case 'e':
+            furi_string_push_back(output, '\e');
+            break;
+        default:
+            furi_string_push_back(output, *input);
+            break;
+        }
+    }
+}
+
 SubGhzProtocolStatus pcsg_block_generic_serialize(
     PCSGBlockGeneric* instance,
     FlipperFormat* flipper_format,
@@ -72,12 +126,15 @@ SubGhzProtocolStatus pcsg_block_generic_serialize(
             break;
         }
 
-        if(!flipper_format_write_string(flipper_format, "Ric", instance->result_ric)) {
+        // FlipperFormat strings end at a newline, and FLEX headers contain one.
+        pcsg_block_generic_escape(temp_str, furi_string_get_cstr(instance->result_ric));
+        if(!flipper_format_write_string(flipper_format, "Ric", temp_str)) {
             FURI_LOG_E(TAG, "Unable to add Ric");
             break;
         }
 
-        if(!flipper_format_write_string(flipper_format, "Message", instance->result_msg)) {
+        pcsg_block_generic_escape(temp_str, furi_string_get_cstr(instance->result_msg));
+        if(!flipper_format_write_string(flipper_format, "Message", temp_str)) {
             FURI_LOG_E(TAG, "Unable to add Message");
             break;
         }
@@ -94,6 +151,7 @@ SubGhzProtocolStatus
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
     FuriString* temp_data = furi_string_alloc();
     FuriString* temp_data2 = furi_string_alloc();
+    FuriString* raw = furi_string_alloc();
 
     do {
         if(!flipper_format_rewind(flipper_format)) {
@@ -101,18 +159,20 @@ SubGhzProtocolStatus
             break;
         }
 
-        if(!flipper_format_read_string(flipper_format, "Ric", temp_data2)) {
+        if(!flipper_format_read_string(flipper_format, "Ric", raw)) {
             FURI_LOG_E(TAG, "Missing Ric");
             break;
         }
+        pcsg_block_generic_unescape(temp_data2, furi_string_get_cstr(raw));
         if(furi_string_size(temp_data2) > PCSG_GENERIC_MAX_FIELD_LENGTH) {
             FURI_LOG_E(TAG, "Ric is too large");
             break;
         }
-        if(!flipper_format_read_string(flipper_format, "Message", temp_data)) {
+        if(!flipper_format_read_string(flipper_format, "Message", raw)) {
             FURI_LOG_E(TAG, "Missing Message");
             break;
         }
+        pcsg_block_generic_unescape(temp_data, furi_string_get_cstr(raw));
         if(furi_string_size(temp_data) > PCSG_GENERIC_MAX_FIELD_LENGTH) {
             FURI_LOG_E(TAG, "Message is too large");
             break;
@@ -134,6 +194,7 @@ SubGhzProtocolStatus
 
     furi_string_free(temp_data);
     furi_string_free(temp_data2);
+    furi_string_free(raw);
 
     return res;
 }

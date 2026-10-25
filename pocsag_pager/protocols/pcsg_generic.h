@@ -53,6 +53,15 @@ SubGhzProtocolStatus
 
 float pcsg_block_generic_fahrenheit_to_celsius(float fahrenheit);
 
+/**
+ * Escape a field for one-line storage: backslash, newline, carriage return,
+ * tab and ESC become \\, \n, \r, \t and \e.
+ */
+void pcsg_block_generic_escape(FuriString* output, const char* input);
+
+/** Reverse pcsg_block_generic_escape(). */
+void pcsg_block_generic_unescape(FuriString* output, const char* input);
+
 #ifdef __cplusplus
 }
 #endif
