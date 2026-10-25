@@ -113,6 +113,15 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
 
     flipper_format_free(temp_fm_preset);
 
+    FlipperFormat* temp_flex_preset = flipper_format_string_alloc();
+    flipper_format_write_string_cstr(
+        temp_flex_preset,
+        (const char*)"Custom_preset_data",
+        (const char*)"02 0D 0B 06 08 32 07 04 14 00 13 02 12 00 11 83 10 F7 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
+    flipper_format_rewind(temp_flex_preset);
+    subghz_setting_load_custom_preset(app->setting, (const char*)"FLEX", temp_flex_preset);
+    flipper_format_free(temp_flex_preset);
+
     // custom presets loading - end
 
     pcsg_preset_init(app, "FM95", 439987500, NULL, 0);

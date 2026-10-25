@@ -36,25 +36,23 @@ void pcsg_view_receiver_info_draw(Canvas* canvas, PCSGReceiverInfoModel* model) 
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
+    uint8_t message_y = 12;
     if(model->generic->result_ric != NULL) {
+        const char* header = furi_string_get_cstr(model->generic->result_ric);
         elements_text_box(
-            canvas,
-            0,
-            0,
-            128,
-            64,
-            AlignLeft,
-            AlignTop,
-            furi_string_get_cstr(model->generic->result_ric),
-            false);
+            canvas, 0, 0, 128, 64, AlignLeft, AlignTop, header, false);
+
+        for(const char* cursor = header; *cursor; cursor++) {
+            if((*cursor == '\n') && (*(cursor + 1) != '\0')) message_y += 12;
+        }
     }
     if(model->generic->result_msg != NULL) {
         elements_text_box(
             canvas,
             0,
-            12,
+            message_y,
             128,
-            64,
+            64 - message_y,
             AlignLeft,
             AlignTop,
             furi_string_get_cstr(model->generic->result_msg),

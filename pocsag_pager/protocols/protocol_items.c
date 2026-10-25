@@ -2,6 +2,7 @@
 
 const SubGhzProtocol* pocsag_pager_protocol_registry_items[] = {
     &subghz_protocol_pocsag,
+    &subghz_protocol_flex,
 };
 
 const SubGhzProtocolRegistry pocsag_pager_protocol_registry = {

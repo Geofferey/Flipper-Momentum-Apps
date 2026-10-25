@@ -1,13 +1,25 @@
-# Flipper POCSAG Receiver plugin
+# Flipper POCSAG/FLEX Receiver plugin
 
 ## Protocol implementation made by @Shmuma + 512, 2400 speeds support by @htotoo
 Plugin based on [Weather Station](https://github.com/flipperdevices/flipperzero-firmware/tree/dev/applications/plugins/weather_station) from OFW
 
 Icons by @Svaarich
 
-Includes new FM preset built into code - 2FSK with 9.5KHz freq deviation.
+Includes two FM presets built into the app:
 
-App supports POCSAG 512, POCSAG 1200, POCSAG 2400 decoding on CC1101 supported frequencies! 
+- `FM95` for POCSAG reception
+- `FLEX` for asynchronous two-level FLEX reception with approximately +/-4.76 kHz deviation
+
+The app supports POCSAG 512, POCSAG 1200, POCSAG 2400, FLEX 1600/2,
+and FLEX 3200/2 decoding on CC1101-supported frequencies.
+
+FLEX 3200/4 and FLEX 6400/4 are not supported because the current CC1101
+asynchronous receive path exposes a two-level digital stream rather than all
+four discriminator levels.
+
+The FLEX framing, BCH correction, deinterleaving, and message parsing are based
+on the GPL-licensed [multimon-ng FLEX decoder](https://github.com/EliasOenal/multimon-ng/blob/master/demod_flex.c).
+
 Check datasheet and add required frequency in config file (see details below)
 
 Default frequency is set to DAPNET - "439987500"
