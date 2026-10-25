@@ -3,6 +3,7 @@
 typedef enum {
     SubmenuIndexPOCSAGPagerReceiver,
     SubmenuIndexPOCSAGPagerReview,
+    SubmenuIndexPOCSAGPagerSettings,
     SubmenuIndexPOCSAGPagerAbout,
 } SubmenuIndex;
 
@@ -30,6 +31,12 @@ void pocsag_pager_scene_start_on_enter(void* context) {
         app);
     submenu_add_item(
         submenu,
+        "Settings",
+        SubmenuIndexPOCSAGPagerSettings,
+        pocsag_pager_scene_start_submenu_callback,
+        app);
+    submenu_add_item(
+        submenu,
         "About",
         SubmenuIndexPOCSAGPagerAbout,
         pocsag_pager_scene_start_submenu_callback,
@@ -51,6 +58,10 @@ bool pocsag_pager_scene_start_on_event(void* context, SceneManagerEvent event) {
             consumed = true;
         } else if(event.event == SubmenuIndexPOCSAGPagerReceiver) {
             scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneReceiver);
+            consumed = true;
+        } else if(event.event == SubmenuIndexPOCSAGPagerSettings) {
+            app->config_standalone = true;
+            scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneReceiverConfig);
             consumed = true;
         } else if(event.event == SubmenuIndexPOCSAGPagerReview) {
             scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneReview);

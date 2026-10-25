@@ -369,10 +369,16 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     capcode_max_item = variable_item_list_add(app->variable_item_list, "Cap. Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_capcode_max(app);
 
-    variable_item_list_add(app->variable_item_list, "Lock Keyboard", 1, NULL, NULL);
+    // Locking the keyboard only makes sense while receiving.
+    uint8_t selected = app->config_selected_index;
+    if(app->config_standalone) {
+        if(selected >= PCSGSettingIndexLock) selected = 0;
+    } else {
+        variable_item_list_add(app->variable_item_list, "Lock Keyboard", 1, NULL, NULL);
+    }
     variable_item_list_set_enter_callback(
         app->variable_item_list, pocsag_pager_scene_receiver_config_var_list_enter_callback, app);
-    variable_item_list_set_selected_item(app->variable_item_list, app->config_selected_index);
+    variable_item_list_set_selected_item(app->variable_item_list, selected);
 
     view_dispatcher_switch_to_view(app->view_dispatcher, POCSAGPagerViewVariableItemList);
 }

@@ -22,7 +22,7 @@ void pocsag_pager_scene_about_on_enter(void* context) {
     furi_string_cat_printf(temp_str, "\e#%s\n", "Description");
     furi_string_cat_printf(
         temp_str,
-        "Receiving POCSAG and FLEX\npager messages.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect FLEX for 2-level signals. Select FLEX4-3200 or FLEX4-6400 to match a 4-level signal's bit rate. RSSI and hopping are disabled with FLEX4. Use Config to set frequency. Custom frequencies are at the end of the list.\n\nTo add new modulations and\nfrequencies create file\n/pocsag/settings.txt\nAnd copy \nsubghz/assets/setting_user.example\ncontents into new\nsettings.txt\n\n");
+        "Receiving POCSAG and FLEX\npager messages.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect FLEX for 2-level signals and a FLEX4 preset for 4-level. RSSI and hopping are disabled with FLEX4.\n\nFrequencies are in\n/pocsag/settings.txt\nCustom frequencies are at the end of the list.\n\n");
 
     furi_string_cat_printf(
         temp_str,
@@ -46,7 +46,7 @@ void pocsag_pager_scene_about_on_enter(void* context) {
         14,
         AlignCenter,
         AlignBottom,
-        "\e#\e!      POCSAG/FLEX Pager    \e!\n",
+        "\e#\e!        Flipper Pager      \e!\n",
         false);
     widget_add_text_scroll_element(app->widget, 0, 16, 128, 50, furi_string_get_cstr(temp_str));
     furi_string_free(temp_str);

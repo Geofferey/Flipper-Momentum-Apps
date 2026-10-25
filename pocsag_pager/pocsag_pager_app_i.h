@@ -67,6 +67,8 @@ struct POCSAGPagerApp {
     SubGhzSetting* setting;
     PCSGFilterSettings filter;
     uint8_t config_selected_index;
+    // Config opened from the main menu rather than the receiver.
+    bool config_standalone;
 
     // Review Messages
     PCSGLog* log;

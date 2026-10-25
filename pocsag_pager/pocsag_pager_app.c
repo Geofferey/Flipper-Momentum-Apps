@@ -55,7 +55,7 @@ static void pocsag_pager_app_create_frequency_file(void) {
                   flipper_format_write_header_cstr(
                       file, SUBGHZ_SETTING_FILE_TYPE, SUBGHZ_SETTING_FILE_VERSION) &&
                   flipper_format_write_comment_cstr(
-                      file, "Created by POCSAG/FLEX Pager: standard frequencies plus US FLEX") &&
+                      file, "Created by Flipper Pager: standard frequencies plus US FLEX") &&
                   flipper_format_write_comment_cstr(
                       file, "paging channels. Above 928 MHz needs the extended range enabled.");
         bool add_standard = true;

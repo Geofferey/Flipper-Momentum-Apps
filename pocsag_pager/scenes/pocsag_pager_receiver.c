@@ -191,6 +191,7 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             consumed = true;
             break;
         case PCSGCustomEventViewReceiverConfig:
+            app->config_standalone = false;
             app->txrx->idx_menu_chosen = pcsg_view_receiver_get_idx_menu(app->pcsg_receiver);
             scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneReceiverConfig);
             consumed = true;
