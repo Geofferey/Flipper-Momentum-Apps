@@ -571,22 +571,32 @@ static uint32_t flex_word_identity(uint8_t type, uint8_t index, uint32_t word) {
     return word;
 }
 
-static uint32_t flex_page_hash(
-    uint32_t capcode,
-    uint8_t type,
-    const uint32_t* words,
-    uint8_t first,
-    uint8_t last) {
-    // FNV-1a over the page identity and its data words.
+/*
+ * Duplicate key for a message: capcode, type and text, ignoring a trailing
+ * "[digits]" tag. Some senders repeat a message with only that tag counting
+ * up ([81], [82]); any other difference, such as a new reading in a report,
+ * keeps the messages apart. Comparing text rather than page words also
+ * ignores header differences between copies, such as the retrieval flag.
+ */
+static uint32_t flex_text_hash(uint32_t capcode, uint8_t type, const char* text) {
+    size_t length = strlen(text);
+    while(length && text[length - 1] == ' ') length--;
+    if(length && text[length - 1] == ']') {
+        size_t start = length - 1;
+        while(start && text[start - 1] >= '0' && text[start - 1] <= '9') start--;
+        if(start < length - 1 && start && text[start - 1] == '[') {
+            length = start - 1;
+            while(length && text[length - 1] == ' ') length--;
+        }
+    }
+
+    // FNV-1a; zero marks an empty slot in the seen list.
     uint32_t hash = 2166136261UL;
-    const uint32_t header[] = {capcode, type};
-    for(size_t i = 0; i < COUNT_OF(header); i++) {
-        hash = (hash ^ header[i]) * 16777619UL;
+    hash = (hash ^ capcode) * 16777619UL;
+    hash = (hash ^ type) * 16777619UL;
+    for(size_t i = 0; i < length; i++) {
+        hash = (hash ^ (uint8_t)text[i]) * 16777619UL;
     }
-    for(uint16_t i = first; i <= last; i++) {
-        hash = (hash ^ flex_word_identity(type, i - first, words[i])) * 16777619UL;
-    }
-    // Zero marks an empty slot in the seen list.
     return hash | 1U;
 }
 
@@ -633,8 +643,9 @@ static bool flex_text_looks_encrypted(const char* text) {
     return best && length - best <= MAX(4U, length / 10U);
 }
 
-static void flex_emit_page(SubGhzProtocolDecoderFlex* instance, uint32_t hash) {
+static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
     const char* message = furi_string_get_cstr(instance->generic.result_msg);
+    const uint32_t hash = flex_text_hash(instance->capcode, instance->page_type, message);
     instance->page_encrypted =
         instance->page_type == FlexPageTypeSecure ||
         (instance->page_type == FlexPageTypeAlphanumeric && !strncmp(message, "ALN: ", 5) &&
@@ -642,16 +653,6 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance, uint32_t hash) {
     instance->page_duplicate = flex_seen_check(instance, hash);
     instance->stats.pages_decoded++;
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
-}
-
-static uint32_t flex_text_hash(uint32_t capcode, uint8_t type, const char* text) {
-    uint32_t hash = 2166136261UL;
-    hash = (hash ^ capcode) * 16777619UL;
-    hash = (hash ^ type) * 16777619UL;
-    for(; *text; text++) {
-        hash = (hash ^ (uint8_t)*text) * 16777619UL;
-    }
-    return hash | 1U;
 }
 
 // Emit a joined message and free its slot. Its header shows the number of
@@ -667,8 +668,7 @@ static void flex_fragment_flush(
     instance->page_repaired = false;
     instance->page_suspect = false;
     flex_set_page_header(instance, slot->capcode, slot->type, slot->parts, 'J', slot->phase);
-    flex_emit_page(
-        instance, flex_text_hash(slot->capcode, slot->type, furi_string_get_cstr(slot->text)));
+    flex_emit_page(instance);
 
     furi_string_free(slot->text);
     memset(slot, 0, sizeof(FlexFragmentSlot));
@@ -997,7 +997,7 @@ static void flex_decode_phase(
             const uint32_t* long_data = NULL;
             if(long_address && valid[long_data_index]) long_data = &words[long_data_index];
             if(flex_parse_tone(instance, capcode, type, vector, long_data, phase)) {
-                flex_emit_page(instance, flex_page_hash(capcode, type, &vector, 0, 0));
+                flex_emit_page(instance);
             }
             continue;
         }
@@ -1097,12 +1097,10 @@ static void flex_decode_phase(
                     phase);
                 furi_string_free(part);
             } else {
-                flex_emit_page(
-                    instance, flex_page_hash(capcode, type, page_words, first, (uint8_t)last));
+                flex_emit_page(instance);
             }
         } else if(parsed) {
-            flex_emit_page(
-                instance, flex_page_hash(capcode, type, page_words, first, (uint8_t)last));
+            flex_emit_page(instance);
         } else {
             instance->stats.pages_parse_failed++;
         }
