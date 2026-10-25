@@ -42,6 +42,9 @@ struct POCSAGPagerTxRx {
     uint8_t hopper_timeout;
     uint8_t hopper_idx_frequency;
     PCSGRxKeyState rx_key_state;
+    // Set when Config changes frequency, preset or hopping; otherwise the
+    // receiver keeps running when it is re-entered.
+    bool rx_restart;
 
     const SubGhzDevice* radio_device;
 };

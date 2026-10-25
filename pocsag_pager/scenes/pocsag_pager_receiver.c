@@ -140,9 +140,12 @@ void pocsag_pager_scene_receiver_on_enter(void* context) {
     subghz_receiver_set_rx_callback(
         app->txrx->receiver, pocsag_pager_scene_receiver_add_to_history_callback, app);
 
-    if(app->txrx->txrx_state == PCSGTxRxStateRx) {
+    // Returning from a message or an unchanged Config keeps the radio running,
+    // so a frame (or the rest of a split message) is not lost to a restart.
+    if(app->txrx->txrx_state == PCSGTxRxStateRx && app->txrx->rx_restart) {
         pcsg_rx_end(app);
     };
+    app->txrx->rx_restart = false;
     if((app->txrx->txrx_state == PCSGTxRxStateIDLE) ||
        (app->txrx->txrx_state == PCSGTxRxStateSleep)) {
         // Start RX

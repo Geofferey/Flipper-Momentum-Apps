@@ -116,6 +116,7 @@ static void pocsag_pager_scene_receiver_config_set_frequency(VariableItem* item)
             (subghz_setting_get_frequency(app->setting, index) % 1000000) / 10000);
         variable_item_set_current_value_text(item, text_buf);
         app->txrx->preset->frequency = subghz_setting_get_frequency(app->setting, index);
+        app->txrx->rx_restart = true;
     } else {
         variable_item_set_current_value_index(
             item, subghz_setting_get_frequency_default_index(app->setting));
@@ -133,6 +134,7 @@ static void pocsag_pager_scene_receiver_config_set_preset(VariableItem* item) {
         app->txrx->preset->frequency,
         subghz_setting_get_preset_data(app->setting, index),
         subghz_setting_get_preset_data_size(app->setting, index));
+    app->txrx->rx_restart = true;
 }
 
 static void pocsag_pager_scene_receiver_config_set_hopping_running(VariableItem* item) {
@@ -169,6 +171,7 @@ static void pocsag_pager_scene_receiver_config_set_hopping_running(VariableItem*
     }
 
     app->txrx->hopper_state = hopping_value[index];
+    app->txrx->rx_restart = true;
 }
 
 static void pocsag_pager_scene_receiver_config_set_capcode_text(VariableItem* item, uint32_t value) {
