@@ -119,6 +119,12 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "LogTemp", &value, 1)) {
             filter->log_temp = value != 0;
         }
+        if(flipper_format_read_uint32(file, "Alert", &value, 1) && value < PCSGAlertCount) {
+            filter->alert = value;
+        }
+        if(flipper_format_read_uint32(file, "SignalSound", &value, 1)) {
+            filter->signal_sound = value != 0;
+        }
     } while(false);
 
     furi_string_free(text);
@@ -160,6 +166,10 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "FlexEncrypted", &value, 1)) break;
         value = filter->log_temp;
         if(!flipper_format_write_uint32(file, "LogTemp", &value, 1)) break;
+        value = filter->alert;
+        if(!flipper_format_write_uint32(file, "Alert", &value, 1)) break;
+        value = filter->signal_sound;
+        if(!flipper_format_write_uint32(file, "SignalSound", &value, 1)) break;
         saved = true;
     } while(false);
 

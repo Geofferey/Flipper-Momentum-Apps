@@ -9,6 +9,8 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFlexDups,
     PCSGSettingIndexFlexEncrypted,
     PCSGSettingIndexLogging,
+    PCSGSettingIndexAlert,
+    PCSGSettingIndexSignalSound,
     PCSGSettingIndexCapcodeFilter,
     PCSGSettingIndexCapcodeMin,
     PCSGSettingIndexCapcodeMax,
@@ -38,6 +40,19 @@ const char* const flex_dups_text[FLEX_DUPS_COUNT] = {
 const char* const logging_text[LOGGING_COUNT] = {
     "Save",
     "Temp",
+};
+
+const char* const alert_text[PCSGAlertCount] = {
+    "Both",
+    "Sound",
+    "Vibro",
+    "Off",
+};
+
+#define SIGNAL_SOUND_COUNT 2
+const char* const signal_sound_text[SIGNAL_SOUND_COUNT] = {
+    "Off",
+    "On",
 };
 
 const char* const capcode_filter_text[PCSGCapcodeFilterCount] = {
@@ -232,6 +247,22 @@ static void pocsag_pager_scene_receiver_config_set_logging(VariableItem* item) {
     app->filter.log_temp = index == 1;
 }
 
+static void pocsag_pager_scene_receiver_config_set_alert(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, alert_text[index]);
+    app->filter.alert = index;
+}
+
+// The speaker is set up when receiving starts, so restart the radio.
+static void pocsag_pager_scene_receiver_config_set_signal_sound(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, signal_sound_text[index]);
+    app->filter.signal_sound = index == 1;
+    app->txrx->rx_restart = true;
+}
+
 static void pocsag_pager_scene_receiver_config_set_capcode_filter(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -353,6 +384,25 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     value_index = app->filter.log_temp ? 1 : 0;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, logging_text[value_index]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Alert:",
+        PCSGAlertCount,
+        pocsag_pager_scene_receiver_config_set_alert,
+        app);
+    variable_item_set_current_value_index(item, app->filter.alert);
+    variable_item_set_current_value_text(item, alert_text[app->filter.alert]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Signal Sound:",
+        SIGNAL_SOUND_COUNT,
+        pocsag_pager_scene_receiver_config_set_signal_sound,
+        app);
+    value_index = app->filter.signal_sound ? 1 : 0;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, signal_sound_text[value_index]);
 
     item = variable_item_list_add(
         app->variable_item_list,

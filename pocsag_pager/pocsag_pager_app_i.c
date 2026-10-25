@@ -82,7 +82,21 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
     subghz_devices_flush_rx(app->txrx->radio_device);
     subghz_devices_set_rx(app->txrx->radio_device);
 
-    if(pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name))) {
+    // Signal sound: mirror the received data to the speaker, as the Sub-GHz
+    // app does. FLEX4 has no async capture to mirror, so its sampler drives
+    // the pin.
+    const bool flex4 = pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name));
+    if(app->filter.signal_sound && furi_hal_speaker_acquire(30)) {
+        app->txrx->speaker_on = true;
+        if(flex4) {
+            furi_hal_gpio_init(&gpio_speaker, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+            flex_sampler_set_speaker(app->txrx->flex_sampler, &gpio_speaker);
+        } else {
+            subghz_devices_set_async_mirror_pin(app->txrx->radio_device, &gpio_speaker);
+        }
+    }
+
+    if(flex4) {
         flex_sampler_start(app->txrx->flex_sampler);
     } else {
         subghz_devices_start_async_rx(
@@ -108,6 +122,12 @@ void pcsg_rx_end(POCSAGPagerApp* app) {
     } else if(subghz_worker_is_running(app->txrx->worker)) {
         subghz_worker_stop(app->txrx->worker);
         subghz_devices_stop_async_rx(app->txrx->radio_device);
+    }
+    if(app->txrx->speaker_on) {
+        flex_sampler_set_speaker(app->txrx->flex_sampler, NULL);
+        subghz_devices_set_async_mirror_pin(app->txrx->radio_device, NULL);
+        if(furi_hal_speaker_is_mine()) furi_hal_speaker_release();
+        app->txrx->speaker_on = false;
     }
     subghz_devices_idle(app->txrx->radio_device);
     app->txrx->txrx_state = PCSGTxRxStateIDLE;

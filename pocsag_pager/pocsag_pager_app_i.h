@@ -45,6 +45,8 @@ struct POCSAGPagerTxRx {
     // Set when Config changes frequency, preset or hopping; otherwise the
     // receiver keeps running when it is re-entered.
     bool rx_restart;
+    // The speaker is held for the signal sound while receiving.
+    bool speaker_on;
 
     const SubGhzDevice* radio_device;
 };

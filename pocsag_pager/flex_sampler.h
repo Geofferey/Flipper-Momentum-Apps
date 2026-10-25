@@ -13,3 +13,6 @@ void flex_sampler_free(FlexSampler* instance);
 void flex_sampler_start(FlexSampler* instance);
 void flex_sampler_stop(FlexSampler* instance);
 bool flex_sampler_is_running(const FlexSampler* instance);
+
+/** Mirror the received signal to an output pin (the speaker), or NULL to stop. */
+void flex_sampler_set_speaker(FlexSampler* instance, const GpioPin* speaker);

@@ -32,6 +32,80 @@ static const NotificationSequence subghs_sequence_rx_locked = {
     NULL,
 };
 
+static const NotificationSequence pcsg_sequence_rx_sound = {
+    &message_green_255,
+    &message_note_c6,
+    &message_delay_50,
+    &message_sound_off,
+    &message_delay_50,
+    NULL,
+};
+
+static const NotificationSequence pcsg_sequence_rx_vibro = {
+    &message_green_255,
+    &message_vibro_on,
+    &message_delay_50,
+    &message_vibro_off,
+    &message_delay_50,
+    NULL,
+};
+
+static const NotificationSequence pcsg_sequence_rx_silent = {
+    &message_green_255,
+    &message_delay_50,
+    NULL,
+};
+
+static const NotificationSequence pcsg_sequence_rx_sound_locked = {
+    &message_green_255,
+    &message_display_backlight_on,
+    &message_note_c6,
+    &message_delay_50,
+    &message_sound_off,
+    &message_delay_500,
+    &message_display_backlight_off,
+    NULL,
+};
+
+static const NotificationSequence pcsg_sequence_rx_vibro_locked = {
+    &message_green_255,
+    &message_display_backlight_on,
+    &message_vibro_on,
+    &message_delay_50,
+    &message_vibro_off,
+    &message_delay_500,
+    &message_display_backlight_off,
+    NULL,
+};
+
+static const NotificationSequence pcsg_sequence_rx_silent_locked = {
+    &message_green_255,
+    &message_display_backlight_on,
+    &message_delay_500,
+    &message_display_backlight_off,
+    NULL,
+};
+
+// New-message notification for the Alert setting; locked variants also wake
+// the backlight briefly.
+static const NotificationSequence* pocsag_pager_scene_receiver_alert(POCSAGPagerApp* app) {
+    const bool locked = app->lock == PCSGLockOn;
+    switch(app->filter.alert) {
+    case PCSGAlertSound:
+        if(locked) return &pcsg_sequence_rx_sound_locked;
+        return &pcsg_sequence_rx_sound;
+    case PCSGAlertVibro:
+        if(locked) return &pcsg_sequence_rx_vibro_locked;
+        return &pcsg_sequence_rx_vibro;
+    case PCSGAlertOff:
+        if(locked) return &pcsg_sequence_rx_silent_locked;
+        return &pcsg_sequence_rx_silent;
+    default:
+        if(locked) return &subghs_sequence_rx_locked;
+        return &subghs_sequence_rx;
+    }
+}
+
 static void pocsag_pager_scene_receiver_update_statusbar(void* context) {
     POCSAGPagerApp* app = context;
     FuriString* history_stat_str;
@@ -88,11 +162,7 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
 
         pocsag_pager_scene_receiver_update_statusbar(app);
         notification_message(app->notifications, &sequence_blink_green_10);
-        if(app->lock != PCSGLockOn) {
-            notification_message(app->notifications, &subghs_sequence_rx);
-        } else {
-            notification_message(app->notifications, &subghs_sequence_rx_locked);
-        }
+        notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
     }
     if(!flex) subghz_receiver_reset(receiver);
     app->txrx->rx_key_state = PCSGRxKeyStateAddKey;

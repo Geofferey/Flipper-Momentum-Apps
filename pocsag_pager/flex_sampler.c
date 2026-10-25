@@ -101,6 +101,8 @@ struct FlexSampler {
     // Allocated only while receiving. 2-bit samples packed four per byte,
     // earliest in the top bits.
     uint8_t* samples;
+    // When set, the upper decision bit is mirrored to this pin (the speaker).
+    const GpioPin* volatile speaker;
 };
 
 static inline uint8_t flex_sampler_get(const uint8_t* samples, uint16_t index) {
@@ -122,6 +124,7 @@ static void flex_sampler_timer_isr(void* context) {
         const uint8_t sample =
             (furi_hal_gpio_read(instance->data_msb) ? 2U : 0U) |
             (furi_hal_gpio_read(instance->data_lsb) ? 1U : 0U);
+        if(instance->speaker) furi_hal_gpio_write(instance->speaker, sample & 2U);
         flex_sampler_put(instance->samples, instance->head, sample);
         instance->sample_count++;
         instance->symbol_count[sample]++;
@@ -315,6 +318,11 @@ void flex_sampler_stop(FlexSampler* instance) {
     instance->samples = NULL;
     instance->head = 0;
     instance->tail = 0;
+}
+
+void flex_sampler_set_speaker(FlexSampler* instance, const GpioPin* speaker) {
+    furi_assert(instance);
+    instance->speaker = speaker;
 }
 
 bool flex_sampler_is_running(const FlexSampler* instance) {

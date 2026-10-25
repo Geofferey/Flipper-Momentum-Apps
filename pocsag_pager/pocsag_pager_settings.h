@@ -22,6 +22,15 @@ typedef enum {
     PCSGCapcodeFilterCount,
 } PCSGCapcodeFilter;
 
+/** Notification for a new message; the LED always blinks. */
+typedef enum {
+    PCSGAlertBoth,
+    PCSGAlertSound,
+    PCSGAlertVibro,
+    PCSGAlertOff,
+    PCSGAlertCount,
+} PCSGAlert;
+
 typedef struct {
     PCSGTypeFilter type_filter;
     bool show_binary;
@@ -32,6 +41,9 @@ typedef struct {
     bool hide_encrypted;
     // Log to one temp file destroyed on exit instead of a kept log per session.
     bool log_temp;
+    PCSGAlert alert;
+    // Play the received signal through the speaker while receiving.
+    bool signal_sound;
 } PCSGFilterSettings;
 
 typedef struct POCSAGPagerApp POCSAGPagerApp;
