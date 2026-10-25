@@ -7,6 +7,11 @@
 
 #define abs(x) ((x) > 0 ? (x) : -(x))
 
+#define INFO_LINE_HEIGHT 10U
+#define INFO_LINES       6U
+#define INFO_TEXT_WIDTH  122U
+#define INFO_LINE_CHARS  64U
+
 struct PCSGReceiverInfo {
     View* view;
 };
@@ -14,7 +19,22 @@ struct PCSGReceiverInfo {
 typedef struct {
     FuriString* protocol_name;
     PCSGBlockGeneric* generic;
+    // Header and message as plain text, word-wrapped when drawn.
+    FuriString* text;
+    uint16_t scroll;
+    uint16_t lines;
 } PCSGReceiverInfoModel;
+
+// Append text without the ESC "#" bold markers used in list headers.
+static void pcsg_view_receiver_info_append_plain(FuriString* output, const char* text) {
+    for(; *text; text++) {
+        if(*text == '\e') {
+            if(text[1] == '#') text++;
+            continue;
+        }
+        furi_string_push_back(output, *text);
+    }
+}
 
 void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, FlipperFormat* fff) {
     furi_assert(pcsg_receiver_info);
@@ -27,45 +47,102 @@ void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, Flippe
             flipper_format_rewind(fff);
             flipper_format_read_string(fff, "Protocol", model->protocol_name);
 
-            pcsg_block_generic_deserialize(model->generic, fff);
+            furi_string_reset(model->text);
+            if(pcsg_block_generic_deserialize(model->generic, fff) == SubGhzProtocolStatusOk) {
+                pcsg_view_receiver_info_append_plain(
+                    model->text, furi_string_get_cstr(model->generic->result_ric));
+                furi_string_trim(model->text, "\n");
+                furi_string_push_back(model->text, '\n');
+                pcsg_view_receiver_info_append_plain(
+                    model->text, furi_string_get_cstr(model->generic->result_msg));
+            }
+            model->scroll = 0;
+            model->lines = 0;
         },
         true);
+}
+
+/*
+ * Word-wrap text to INFO_TEXT_WIDTH, drawing the INFO_LINES lines starting at
+ * line first. Returns the total number of lines. Wrapping is done on every
+ * draw: messages are at most a few hundred characters.
+ */
+static uint16_t pcsg_view_receiver_info_layout(Canvas* canvas, const char* text, uint16_t first) {
+    char line[INFO_LINE_CHARS];
+    uint16_t lines = 0;
+    while(*text) {
+        size_t length = 0;
+        size_t space = SIZE_MAX;
+        while(text[length] && text[length] != '\n' && length < sizeof(line) - 1U) {
+            line[length] = text[length];
+            line[length + 1U] = '\0';
+            if(length && canvas_string_width(canvas, line) > INFO_TEXT_WIDTH) break;
+            if(text[length] == ' ') space = length;
+            length++;
+        }
+
+        // Prefer to break at the last space; a single long word is split.
+        const bool wrapped = text[length] && text[length] != '\n';
+        size_t take = length;
+        size_t advance = length;
+        if(wrapped && space != SIZE_MAX && space > 0) {
+            take = space;
+            advance = space + 1U;
+        } else if(!wrapped && text[length] == '\n') {
+            advance = length + 1U;
+        }
+        if(advance == 0) advance = 1;
+        line[take] = '\0';
+
+        if(lines >= first && lines < first + INFO_LINES) {
+            canvas_draw_str(
+                canvas, 0, (lines - first + 1U) * INFO_LINE_HEIGHT - 2U, line);
+        }
+        lines++;
+
+        text += advance;
+        if(wrapped) {
+            while(*text == ' ') text++;
+        }
+    }
+    return lines;
 }
 
 void pcsg_view_receiver_info_draw(Canvas* canvas, PCSGReceiverInfoModel* model) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
-    uint8_t message_y = 12;
-    if(model->generic->result_ric != NULL) {
-        const char* header = furi_string_get_cstr(model->generic->result_ric);
-        elements_text_box(
-            canvas, 0, 0, 128, 64, AlignLeft, AlignTop, header, false);
 
-        for(const char* cursor = header; *cursor; cursor++) {
-            if((*cursor == '\n') && (*(cursor + 1) != '\0')) message_y += 12;
-        }
-    }
-    if(model->generic->result_msg != NULL) {
-        elements_text_box(
-            canvas,
-            0,
-            message_y,
-            128,
-            64 - message_y,
-            AlignLeft,
-            AlignTop,
-            furi_string_get_cstr(model->generic->result_msg),
-            false);
+    model->lines =
+        pcsg_view_receiver_info_layout(canvas, furi_string_get_cstr(model->text), model->scroll);
+    if(model->lines > INFO_LINES) {
+        elements_scrollbar_pos(
+            canvas, 128, 0, 64, model->scroll, model->lines - INFO_LINES + 1U);
     }
 }
 
 bool pcsg_view_receiver_info_input(InputEvent* event, void* context) {
     furi_assert(context);
-    //PCSGReceiverInfo* pcsg_receiver_info = context;
+    PCSGReceiverInfo* pcsg_receiver_info = context;
 
     if(event->key == InputKeyBack) {
         return false;
+    }
+
+    if((event->key == InputKeyUp || event->key == InputKeyDown) &&
+       (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+        with_view_model(
+            pcsg_receiver_info->view,
+            PCSGReceiverInfoModel * model,
+            {
+                if(event->key == InputKeyUp && model->scroll > 0) {
+                    model->scroll--;
+                } else if(
+                    event->key == InputKeyDown && model->scroll + INFO_LINES < model->lines) {
+                    model->scroll++;
+                }
+            },
+            true);
     }
 
     return true;
@@ -82,7 +159,12 @@ void pcsg_view_receiver_info_exit(void* context) {
     with_view_model(
         pcsg_receiver_info->view,
         PCSGReceiverInfoModel * model,
-        { furi_string_reset(model->protocol_name); },
+        {
+            furi_string_reset(model->protocol_name);
+            furi_string_reset(model->text);
+            model->scroll = 0;
+            model->lines = 0;
+        },
         false);
 }
 
@@ -108,6 +190,7 @@ PCSGReceiverInfo* pcsg_view_receiver_info_alloc() {
             // Ric and Message strings are created by the first deserialize.
             model->generic = calloc(1, sizeof(PCSGBlockGeneric));
             model->protocol_name = furi_string_alloc();
+            model->text = furi_string_alloc();
         },
         true);
 
@@ -122,6 +205,7 @@ void pcsg_view_receiver_info_free(PCSGReceiverInfo* pcsg_receiver_info) {
         PCSGReceiverInfoModel * model,
         {
             furi_string_free(model->protocol_name);
+            furi_string_free(model->text);
             if(model->generic->result_ric) furi_string_free(model->generic->result_ric);
             if(model->generic->result_msg) furi_string_free(model->generic->result_msg);
             free(model->generic);

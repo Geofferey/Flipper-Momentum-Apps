@@ -23,7 +23,8 @@
 #define FLEX_SYNC2_DURATION_MS 25U
 #define FLEX_DATA_DURATION_MS 1760U
 #define FLEX_MAX_RUN_SYMBOLS 512U
-#define FLEX_MAX_MESSAGE_CHARS 256U
+// A single fragment carries at most about 264 characters (88 words x 3).
+#define FLEX_MAX_MESSAGE_CHARS 512U
 #define FLEX_TRUNCATION_MARK   "..."
 #define FLEX_NO_WORD           0xFFU
 #define FLEX_NUMERIC_MAX_WORDS 9U
@@ -34,6 +35,16 @@
 // compared on the remaining fields. Layout as built by PortaPack Mayhem's
 // FLEX TX (flex_encode_alpha in firmware/application/external/flex_tx).
 #define FLEX_ALPHA_HEADER_IDENTITY 0x0017FC00UL
+
+// Long alphanumeric messages are sent as fragments: the first has fragment
+// number 3, the rest 0, 1, 2, 0, ...; all but the last set continuation.
+// Fragments are joined per capcode and message number.
+// Group sends deliver the same split message to several capcodes at once,
+// each needing a slot; idle slots hold no text.
+#define FLEX_FRAGMENT_SLOTS      8U
+#define FLEX_FRAGMENT_TIMEOUT_MS (4U * 60U * 1000U)
+#define FLEX_JOINED_MAX_CHARS    1024U
+#define FLEX_GAP_MARK            "[...]"
 
 #define FLEX_PARTIAL_PAGES        4U
 #define FLEX_PARTIAL_TIMEOUT_MS   (10U * 60U * 1000U)
@@ -90,6 +101,19 @@ typedef struct {
     uint32_t tick;
 } FlexSeenPage;
 
+typedef struct {
+    bool used;
+    uint32_t tick;
+    uint32_t capcode;
+    uint8_t type;
+    uint8_t message_number;
+    uint8_t next_fragment;
+    uint8_t parts;
+    char phase;
+    // Allocated while the message is being joined.
+    FuriString* text;
+} FlexFragmentSlot;
+
 static const FlexMode flex_modes[] = {
     {.sync = 0x870C, .baud = 1600, .levels = 2},
     {.sync = 0xB068, .baud = 1600, .levels = 4},
@@ -138,9 +162,14 @@ struct SubGhzProtocolDecoderFlex {
     FlexPartialPage* partial;
     FlexSeenPage seen[FLEX_SEEN_PAGES];
     uint8_t seen_next;
+    FlexFragmentSlot fragments[FLEX_FRAGMENT_SLOTS];
     uint32_t merged_words[FLEX_PHASE_WORDS];
     bool merged_valid[FLEX_PHASE_WORDS];
+    // Alphanumeric page gathered into one run: header word, then text.
+    uint32_t page_words[FLEX_PHASE_WORDS];
+    bool page_valid[FLEX_PHASE_WORDS];
     bool page_repaired;
+    bool page_suspect;
     bool page_duplicate;
 
     uint32_t capcode;
@@ -213,6 +242,9 @@ void subghz_protocol_decoder_flex_free(void* context) {
     furi_string_free(instance->generic.result_ric);
     furi_string_free(instance->generic.result_msg);
     free(instance->partial);
+    for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
+        if(instance->fragments[i].text) furi_string_free(instance->fragments[i].text);
+    }
     free(instance);
 }
 
@@ -306,7 +338,7 @@ static void flex_set_page_header(
     instance->phase = phase;
     furi_string_printf(
         instance->generic.result_ric,
-        "[F%u/%c S%u%c %02u.%03u%s]\n\e#CAP: %09" PRIu32 "\e#\n",
+        "[F%u/%c S%u%c %02u.%03u%s%s]\n\e#CAP: %09" PRIu32 "\e#\n",
         flex_bit_rate(instance),
         phase,
         fragment,
@@ -314,6 +346,7 @@ static void flex_set_page_header(
         instance->cycle,
         instance->frame,
         instance->page_repaired ? " R" : "",
+        instance->page_suspect ? " ?" : "",
         capcode);
 }
 
@@ -465,6 +498,43 @@ static bool flex_parse_tone(
     return true;
 }
 
+/*
+ * Alphanumeric pages are parsed as one run: header word, then text words.
+ * With a long address the header is carried in the second vector slot and
+ * the message field holds only the text, although the vector length still
+ * counts the header. Layout as built by PortaPack Mayhem's FLEX TX
+ * (flex_encode_alpha) and confirmed by the header checksum on received pages.
+ */
+static void flex_gather_alpha_page(
+    SubGhzProtocolDecoderFlex* instance,
+    const uint32_t words[FLEX_PHASE_WORDS],
+    const bool valid[FLEX_PHASE_WORDS],
+    uint8_t first,
+    uint8_t length,
+    uint8_t header_index) {
+    for(uint8_t i = 0; i < length; i++) {
+        uint8_t source = first + i;
+        if(header_index != FLEX_NO_WORD) source = i == 0 ? header_index : first + i - 1U;
+        instance->page_words[i] = words[source];
+        instance->page_valid[i] = valid[source];
+    }
+}
+
+/*
+ * Alphanumeric header bits 0-9 hold the ones' complement of the sum of bits
+ * 0-7, 8-15 and 16-20 of every page word, taken with those header bits zero
+ * (as built by PortaPack Mayhem's flex_encode_alpha; matches received pages).
+ */
+static bool flex_alpha_checksum_valid(const uint32_t* words, uint8_t first, uint8_t last) {
+    uint32_t sum = 0;
+    for(uint16_t i = first; i <= last; i++) {
+        uint32_t word = words[i] & 0x001FFFFFUL;
+        if(i == first) word &= ~0x3FFUL;
+        sum += (word & 0xFFU) + ((word >> 8) & 0xFFU) + ((word >> 16) & 0x1FU);
+    }
+    return ((~sum) & 0x3FFU) == (words[first] & 0x3FFU);
+}
+
 // Binary pages are shown as raw 21-bit words, like multimon-ng's parse_unknown().
 static bool flex_parse_binary(
     SubGhzProtocolDecoderFlex* instance,
@@ -536,6 +606,116 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance, uint32_t hash) {
     instance->page_duplicate = flex_seen_check(instance, hash);
     instance->stats.pages_decoded++;
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
+}
+
+static uint32_t flex_text_hash(uint32_t capcode, uint8_t type, const char* text) {
+    uint32_t hash = 2166136261UL;
+    hash = (hash ^ capcode) * 16777619UL;
+    hash = (hash ^ type) * 16777619UL;
+    for(; *text; text++) {
+        hash = (hash ^ (uint8_t)*text) * 16777619UL;
+    }
+    return hash | 1U;
+}
+
+// Emit a joined message and free its slot. Its header shows the number of
+// parts and J; FLEX_GAP_MARK marks missing parts.
+static void flex_fragment_flush(
+    SubGhzProtocolDecoderFlex* instance,
+    FlexFragmentSlot* slot,
+    bool incomplete) {
+    if(incomplete) furi_string_cat_str(slot->text, FLEX_GAP_MARK);
+    furi_string_set_str(instance->generic.result_msg, "ALN: ");
+    furi_string_cat(instance->generic.result_msg, slot->text);
+
+    instance->page_repaired = false;
+    instance->page_suspect = false;
+    flex_set_page_header(instance, slot->capcode, slot->type, slot->parts, 'J', slot->phase);
+    flex_emit_page(
+        instance, flex_text_hash(slot->capcode, slot->type, furi_string_get_cstr(slot->text)));
+
+    furi_string_free(slot->text);
+    memset(slot, 0, sizeof(FlexFragmentSlot));
+}
+
+static void flex_fragment_flush_expired(SubGhzProtocolDecoderFlex* instance) {
+    const uint32_t now = furi_get_tick();
+    for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
+        FlexFragmentSlot* slot = &instance->fragments[i];
+        if(slot->used && now - slot->tick >= furi_ms_to_ticks(FLEX_FRAGMENT_TIMEOUT_MS)) {
+            flex_fragment_flush(instance, slot, true);
+        }
+    }
+}
+
+/*
+ * Add one fragment of a long alphanumeric message, given as its text without
+ * the "ALN: " prefix. The joined message is emitted when the last fragment
+ * arrives; parts that never arrive are marked with FLEX_GAP_MARK.
+ */
+static void flex_fragment_add(
+    SubGhzProtocolDecoderFlex* instance,
+    uint32_t capcode,
+    uint8_t type,
+    uint8_t message_number,
+    uint8_t fragment,
+    bool continuation,
+    const char* text,
+    char phase) {
+    FlexFragmentSlot* slot = NULL;
+    for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
+        FlexFragmentSlot* candidate = &instance->fragments[i];
+        if(candidate->used && candidate->capcode == capcode && candidate->type == type &&
+           candidate->message_number == message_number) {
+            slot = candidate;
+            break;
+        }
+    }
+
+    // A new first fragment ends whatever was being joined for this message.
+    if(slot && fragment == 3U) {
+        flex_fragment_flush(instance, slot, true);
+        slot = NULL;
+    }
+
+    if(!slot) {
+        // Use a free slot, or flush the oldest to make room.
+        slot = &instance->fragments[0];
+        for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
+            FlexFragmentSlot* candidate = &instance->fragments[i];
+            if(!candidate->used) {
+                slot = candidate;
+                break;
+            }
+            if(candidate->tick - slot->tick > UINT32_MAX / 2U) slot = candidate;
+        }
+        if(slot->used) flex_fragment_flush(instance, slot, true);
+
+        slot->used = true;
+        slot->capcode = capcode;
+        slot->type = type;
+        slot->message_number = message_number;
+        slot->text = furi_string_alloc();
+        // A later fragment without its start: the beginning is missing.
+        if(fragment != 3U) furi_string_set_str(slot->text, FLEX_GAP_MARK);
+    } else if(fragment != slot->next_fragment) {
+        furi_string_cat_str(slot->text, FLEX_GAP_MARK);
+    }
+
+    if(furi_string_size(slot->text) + strlen(text) > FLEX_JOINED_MAX_CHARS) {
+        const size_t room = FLEX_JOINED_MAX_CHARS > furi_string_size(slot->text) ?
+                                FLEX_JOINED_MAX_CHARS - furi_string_size(slot->text) :
+                                0U;
+        furi_string_cat_printf(slot->text, "%.*s" FLEX_TRUNCATION_MARK, (int)room, text);
+    } else {
+        furi_string_cat_str(slot->text, text);
+    }
+    slot->parts++;
+    slot->next_fragment = fragment == 3U ? 0U : (fragment + 1U) % 3U;
+    slot->phase = phase;
+    slot->tick = furi_get_tick();
+
+    if(!continuation) flex_fragment_flush(instance, slot, false);
 }
 
 static bool flex_partial_matches(
@@ -759,6 +939,7 @@ static void flex_decode_phase(
         }
 
         instance->page_repaired = false;
+        instance->page_suspect = false;
         if(type == FlexPageTypeTone) {
             // Tone pages live in the vector word, plus the second vector slot
             // for long addresses.
@@ -777,33 +958,59 @@ static void flex_decode_phase(
                           type == FlexPageTypeBinary;
         if(!numeric && !text) continue;
 
-        const uint8_t first = (vector >> 7) & 0x7F;
+        uint8_t first = (vector >> 7) & 0x7F;
         const uint8_t length = numeric ? ((vector >> 14) & 0x07) + 1U : (vector >> 14) & 0x7F;
-        const uint16_t last = first + length - 1U;
+        uint16_t last = first + length - 1U;
         if(length == 0 || last >= FLEX_PHASE_WORDS) {
             instance->stats.pages_bad_range++;
             continue;
         }
 
+        const bool alpha = type == FlexPageTypeAlphanumeric || type == FlexPageTypeSecure;
         const uint32_t* page_words = words;
         const bool* page_valid = valid;
+        if(alpha) {
+            flex_gather_alpha_page(
+                instance,
+                words,
+                valid,
+                first,
+                length,
+                long_address ? long_data_index : FLEX_NO_WORD);
+            page_words = instance->page_words;
+            page_valid = instance->page_valid;
+            first = 0;
+            last = length - 1U;
+        }
+
         if(numeric && long_address) {
             // Its words are not one contiguous range, so it cannot be repaired;
             // the parser checks each word it reads.
-        } else if(flex_word_range_valid(valid, first, (uint8_t)last)) {
+        } else if(flex_word_range_valid(page_valid, first, (uint8_t)last)) {
             // A clean copy makes any partial copy of the same page redundant.
-            FlexPartialPage* partial =
-                flex_find_partial(instance, capcode, type, words, valid, first, length);
+            FlexPartialPage* partial = flex_find_partial(
+                instance, capcode, type, page_words, page_valid, first, length);
             if(partial) partial->used = false;
         } else {
             instance->stats.pages_incomplete++;
-            if(!flex_repair_page(instance, capcode, type, words, valid, first, (uint8_t)last)) {
+            if(!flex_repair_page(
+                   instance, capcode, type, page_words, page_valid, first, (uint8_t)last)) {
                 continue;
             }
             page_words = instance->merged_words;
             page_valid = instance->merged_valid;
             instance->page_repaired = true;
             instance->stats.pages_repaired++;
+        }
+
+        // Every word passed BCH, but BCH can "correct" a badly damaged word to
+        // the wrong value. The header checksum covers the whole message: drop
+        // a repaired page that fails it (its copies did not really agree) and
+        // mark a received one as suspect.
+        if(alpha && !flex_alpha_checksum_valid(page_words, first, (uint8_t)last)) {
+            instance->stats.pages_checksum_bad++;
+            if(instance->page_repaired) continue;
+            instance->page_suspect = true;
         }
 
         bool parsed;
@@ -817,7 +1024,29 @@ static void flex_decode_phase(
             parsed = flex_parse_alphanumeric(
                 instance, page_words, page_valid, capcode, type, first, (uint8_t)last, phase);
         }
-        if(parsed) {
+        if(parsed && alpha) {
+            const uint32_t header = page_words[first];
+            const bool continuation = (header >> 10) & 0x01U;
+            const uint8_t fragment = (header >> 11) & 0x03U;
+            if(continuation || fragment != 3U) {
+                // Part of a longer message: join before emitting.
+                FuriString* part =
+                    furi_string_alloc_set_str(furi_string_get_cstr(instance->generic.result_msg) + 5);
+                flex_fragment_add(
+                    instance,
+                    capcode,
+                    type,
+                    (header >> 13) & 0x3FU,
+                    fragment,
+                    continuation,
+                    furi_string_get_cstr(part),
+                    phase);
+                furi_string_free(part);
+            } else {
+                flex_emit_page(
+                    instance, flex_page_hash(capcode, type, page_words, first, (uint8_t)last));
+            }
+        } else if(parsed) {
             flex_emit_page(
                 instance, flex_page_hash(capcode, type, page_words, first, (uint8_t)last));
         } else {
@@ -835,6 +1064,7 @@ static void flex_decode_data(SubGhzProtocolDecoderFlex* instance) {
     if(levels == 4U) flex_decode_phase(instance, instance->phase_b, 'B');
     if(baud == 3200U) flex_decode_phase(instance, instance->phase_c, 'C');
     if(baud == 3200U && levels == 4U) flex_decode_phase(instance, instance->phase_d, 'D');
+    flex_fragment_flush_expired(instance);
 }
 
 static void flex_read_data_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t symbol) {

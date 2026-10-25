@@ -14,6 +14,8 @@
 #define PCSG_HISTORY_LOG_DIR    EXT_PATH("pocsag/logs")
 #define PCSG_HISTORY_LOG_EXT    ".txt"
 #define PCSG_HISTORY_LABEL_SIZE 40U
+/** Longest log line written or read; fits the longest escaped header and message. */
+#define PCSG_HISTORY_MAX_LINE   3072U
 
 /** Tab-separated fields of a log line; Ric and Message are escaped. */
 typedef enum {

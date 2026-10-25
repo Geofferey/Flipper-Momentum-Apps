@@ -33,7 +33,7 @@ static const SubGhzBlockConst pocsag2400_const = {
 #define POCSAG_FUNC_ALERT2 2
 #define POCSAG_FUNC_ALPHANUM 3
 #define POCSAG_MAX_RUN_BITS 512U
-#define POCSAG_MAX_MESSAGE_CHARS 512U
+#define POCSAG_MAX_MESSAGE_CHARS 1024U
 
 static const char* func_msg[] = {"\e#Num:\e# ", "\e#Alert\e#", "\e#Alert:\e# ", "\e#Msg:\e# "};
 static const char* bcd_chars = "*U -)(";
@@ -133,11 +133,13 @@ static bool decode_message_alphanumeric(SubGhzProtocolDecoderPocsag* instance, u
         instance->char_bits++;
         if(instance->char_bits == 7) {
             if(instance->char_data == 0) return false;
+            // Past the limit keep parsing so the message still ends cleanly,
+            // and mark it as truncated.
             if(furi_string_size(instance->msg) >= POCSAG_MAX_MESSAGE_CHARS) {
                 instance->overflowed = true;
-                return false;
+            } else {
+                furi_string_push_back(instance->msg, instance->char_data);
             }
-            furi_string_push_back(instance->msg, instance->char_data);
             instance->char_data = 0;
             instance->char_bits = 0;
         }
@@ -161,9 +163,9 @@ static bool decode_message_numeric(SubGhzProtocolDecoderPocsag* instance, uint32
             val = bcd_chars[val - 10];
         if(furi_string_size(instance->msg) >= POCSAG_MAX_MESSAGE_CHARS) {
             instance->overflowed = true;
-            return false;
+        } else {
+            furi_string_push_back(instance->msg, val);
         }
-        furi_string_push_back(instance->msg, val);
     }
     return true;
 }
@@ -184,11 +186,19 @@ static bool pocsag_decode_message_word(SubGhzProtocolDecoderPocsag* instance, ui
 
 // Function called when current message got decoded, but other messages might follow
 static bool pocsag_message_done(SubGhzProtocolDecoderPocsag* instance) {
-    const size_t required =
-        furi_string_size(instance->done_msg) + furi_string_size(instance->msg) + 1U;
-    if(required > POCSAG_MAX_MESSAGE_CHARS) {
+    // Messages of one transmission are joined; cut the newest one to fit
+    // rather than dropping the transmission.
+    const size_t used = furi_string_size(instance->done_msg);
+    const size_t room = used + 4U < POCSAG_MAX_MESSAGE_CHARS ?
+                            POCSAG_MAX_MESSAGE_CHARS - used - 4U :
+                            0U;
+    if(furi_string_size(instance->msg) > room) {
+        furi_string_left(instance->msg, room);
         instance->overflowed = true;
-        return false;
+    }
+    if(instance->overflowed) {
+        furi_string_cat_str(instance->msg, "...");
+        instance->overflowed = false;
     }
 
     // append the message to the long-term storage string
@@ -348,10 +358,6 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
                         pocsag_decode_address_word(instance, codeword);
                     } else {
                         if(!pocsag_decode_message_word(instance, codeword)) {
-                            if(instance->overflowed) {
-                                subghz_protocol_decoder_pocsag_reset(context);
-                                return;
-                            }
                             instance->decoder.parser_step = PocsagDecoderStepFoundPreamble;
                             if(!pocsag_message_done(instance)) {
                                 subghz_protocol_decoder_pocsag_reset(context);

@@ -20,8 +20,6 @@
  * for the list, so the list can grow far beyond what full messages in RAM
  * would allow.
  */
-#define PCSG_HISTORY_MAX_LINE 2048U
-
 // The index is allocated in blocks as messages arrive and released on reset,
 // so an idle receiver costs nothing and no single allocation is large.
 #define PCSG_HISTORY_BLOCK_ITEMS 50U

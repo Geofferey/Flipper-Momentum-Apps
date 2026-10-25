@@ -8,7 +8,6 @@
 #define TAG "PCSGLog"
 
 #define PCSG_LOG_READ_CHUNK  512U
-#define PCSG_LOG_MAX_LINE    2048U
 #define PCSG_LOG_LABEL_CACHE 8U
 
 // Offsets live in 2 KB blocks allocated as lines are found, so no single
@@ -153,7 +152,7 @@ static char* pcsg_log_read_line(PCSGLog* instance, uint16_t idx) {
     if(!instance->open || idx >= instance->count) return NULL;
     const uint32_t start = pcsg_log_offset(instance, idx);
     uint32_t length = instance->file_size - start;
-    if(length > PCSG_LOG_MAX_LINE) length = PCSG_LOG_MAX_LINE;
+    if(length > PCSG_HISTORY_MAX_LINE) length = PCSG_HISTORY_MAX_LINE;
 
     char* buffer = malloc(length + 1U);
     size_t read = 0;
