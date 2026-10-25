@@ -24,6 +24,51 @@ static void pocsag_pager_app_tick_event_callback(void* context) {
     scene_manager_handle_tick_event(app->scene_manager);
 }
 
+#define PCSG_FREQUENCY_FILE EXT_PATH("pocsag/settings.txt")
+
+// US FLEX paging channels: nationwide ones from the RadioReference paging wiki
+// (https://wiki.radioreference.com/index.php/Paging), plus 929.4625 MHz, a
+// local test paging channel. They are above the CC1101's 928 MHz rating;
+// Sub-GHz settings skips them unless the extended frequency range is enabled.
+static const uint32_t pcsg_flex_frequencies[] = {
+    929462500,
+    929587500,
+    929612500,
+    929662500,
+    929937500,
+    931062500,
+    931212500,
+    931937500,
+};
+
+/*
+ * Create the frequency list on first run: the standard Sub-GHz frequencies
+ * plus common FLEX paging channels. An existing file is left alone, so a
+ * user's own list is never overwritten.
+ */
+static void pocsag_pager_app_create_frequency_file(void) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    if(!storage_file_exists(storage, PCSG_FREQUENCY_FILE)) {
+        storage_simply_mkdir(storage, EXT_PATH("pocsag"));
+        FlipperFormat* file = flipper_format_file_alloc(storage);
+        bool ok = flipper_format_file_open_new(file, PCSG_FREQUENCY_FILE) &&
+                  flipper_format_write_header_cstr(
+                      file, SUBGHZ_SETTING_FILE_TYPE, SUBGHZ_SETTING_FILE_VERSION) &&
+                  flipper_format_write_comment_cstr(
+                      file, "Created by POCSAG/FLEX Pager: standard frequencies plus US FLEX") &&
+                  flipper_format_write_comment_cstr(
+                      file, "paging channels. Above 928 MHz needs the extended range enabled.");
+        bool add_standard = true;
+        ok = ok && flipper_format_write_bool(file, "Add_standard_frequencies", &add_standard, 1);
+        for(size_t i = 0; ok && i < COUNT_OF(pcsg_flex_frequencies); i++) {
+            ok = flipper_format_write_uint32(file, "Frequency", &pcsg_flex_frequencies[i], 1);
+        }
+        if(!ok) FURI_LOG_E("POCSAGPager", "Unable to create %s", PCSG_FREQUENCY_FILE);
+        flipper_format_free(file);
+    }
+    furi_record_close(RECORD_STORAGE);
+}
+
 POCSAGPagerApp* pocsag_pager_app_alloc() {
     POCSAGPagerApp* app = calloc(1, sizeof(POCSAGPagerApp));
 
@@ -90,7 +135,8 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
 
     //ToDo FIX  file name setting
 
-    subghz_setting_load(app->setting, EXT_PATH("pocsag/settings.txt"));
+    pocsag_pager_app_create_frequency_file();
+    subghz_setting_load(app->setting, PCSG_FREQUENCY_FILE);
 
     //init Worker & Protocol & History
     app->lock = PCSGLockOff;
