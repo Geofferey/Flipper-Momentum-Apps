@@ -17,7 +17,9 @@ static uint8_t flex_exp_table[32];
 static uint8_t flex_s1_table[FLEX_BCH_CODE_BITS];
 static uint8_t flex_s3_table[FLEX_BCH_CODE_BITS];
 static uint16_t flex_bit_key[FLEX_BCH_CODE_BITS];
-static uint32_t flex_error_table[1024];
+// Error bits for each syndrome: up to two bit positions, each stored plus one
+// in 5 bits so that 0 means none (2 KB instead of 4 KB of 32-bit masks).
+static uint16_t flex_error_table[1024];
 static bool flex_bch_initialized;
 
 static uint8_t flex_bch_ctz(uint32_t value) {
@@ -85,14 +87,14 @@ static void flex_bch_init(void) {
             ((uint16_t)flex_s1_table[received_index] << 5) |
             flex_s3_table[received_index];
         flex_bit_key[bit] = key;
-        flex_error_table[key] = 1UL << bit;
+        flex_error_table[key] = bit + 1U;
     }
 
     for(uint8_t first = 0; first < FLEX_BCH_CODE_BITS; first++) {
         for(uint8_t second = first + 1; second < FLEX_BCH_CODE_BITS; second++) {
             const uint16_t key = flex_bit_key[first] ^ flex_bit_key[second];
             if(flex_error_table[key] == 0) {
-                flex_error_table[key] = (1UL << first) | (1UL << second);
+                flex_error_table[key] = (first + 1U) | ((second + 1U) << 5);
             }
         }
     }
@@ -106,8 +108,10 @@ int flex_bch_correct(uint32_t* codeword) {
     const uint16_t syndrome = flex_bch_syndrome(*codeword);
     if(syndrome == 0) return 0;
 
-    const uint32_t error = flex_error_table[syndrome];
-    if(error == 0) return -1;
+    const uint16_t entry = flex_error_table[syndrome];
+    if(entry == 0) return -1;
+    uint32_t error = 1UL << ((entry & 0x1FU) - 1U);
+    if(entry >> 5) error |= 1UL << ((entry >> 5) - 1U);
 
     *codeword ^= error;
     return flex_bch_popcount(error);

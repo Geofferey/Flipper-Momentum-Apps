@@ -43,6 +43,9 @@ void pcsg_view_receiver_set_item_callback(
     PCSGReceiverItemCallback callback,
     void* context);
 
+/** Review mode lists a saved log: no Config button, RSSI or scanning screen. */
+void pcsg_view_receiver_set_review_mode(PCSGReceiver* pcsg_receiver, bool review);
+
 /** Set the number of list rows, e.g. when re-entering the receiver. */
 void pcsg_view_receiver_set_item_count(PCSGReceiver* pcsg_receiver, uint16_t count);
 

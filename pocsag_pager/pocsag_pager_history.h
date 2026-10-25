@@ -10,6 +10,30 @@
 /** Entries kept in the on-screen list; every message is also logged to SD. */
 #define PCSG_HISTORY_MAX 300
 
+/** Where receive sessions are logged, one file per session. */
+#define PCSG_HISTORY_LOG_DIR    EXT_PATH("pocsag/logs")
+#define PCSG_HISTORY_LOG_EXT    ".txt"
+#define PCSG_HISTORY_LABEL_SIZE 40U
+
+/** Tab-separated fields of a log line; Ric and Message are escaped. */
+typedef enum {
+    PCSGLogFieldTime,
+    PCSGLogFieldFrequency,
+    PCSGLogFieldProtocol,
+    PCSGLogFieldRic,
+    PCSGLogFieldMessage,
+    PCSGLogFieldCount,
+} PCSGLogField;
+
+/** Split a log line in place. Returns false if fields are missing. */
+bool pcsg_history_split_line(char* line, char* fields[PCSGLogFieldCount]);
+
+/** Copy split log fields into Protocol/Ric/Message for the info view. */
+bool pcsg_history_fields_to_flipper(char* const fields[PCSGLogFieldCount], FlipperFormat* output);
+
+/** Build a one-line list label from an unescaped header and message. */
+void pcsg_history_make_label(char* label, size_t size, const char* ric, const char* message);
+
 typedef struct PCSGHistory PCSGHistory;
 
 /** History state add key */

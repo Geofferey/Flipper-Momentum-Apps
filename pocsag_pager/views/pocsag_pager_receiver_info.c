@@ -105,7 +105,8 @@ PCSGReceiverInfo* pcsg_view_receiver_info_alloc() {
         pcsg_receiver_info->view,
         PCSGReceiverInfoModel * model,
         {
-            model->generic = malloc(sizeof(PCSGBlockGeneric));
+            // Ric and Message strings are created by the first deserialize.
+            model->generic = calloc(1, sizeof(PCSGBlockGeneric));
             model->protocol_name = furi_string_alloc();
         },
         true);
@@ -121,6 +122,8 @@ void pcsg_view_receiver_info_free(PCSGReceiverInfo* pcsg_receiver_info) {
         PCSGReceiverInfoModel * model,
         {
             furi_string_free(model->protocol_name);
+            if(model->generic->result_ric) furi_string_free(model->generic->result_ric);
+            if(model->generic->result_msg) furi_string_free(model->generic->result_msg);
             free(model->generic);
         },
         false);

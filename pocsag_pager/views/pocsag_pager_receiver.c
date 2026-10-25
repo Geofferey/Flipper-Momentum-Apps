@@ -48,6 +48,8 @@ typedef struct {
     PCSGReceiverBarShow bar_show;
     uint8_t u_rssi;
     bool ext_module;
+    // Browsing a saved log: no radio, so no Config button or RSSI.
+    bool review;
 } PCSGReceiverModel;
 
 void pcsg_receiver_rssi(PCSGReceiver* instance, float rssi) {
@@ -138,6 +140,12 @@ void pcsg_view_receiver_set_item_callback(
         false);
 }
 
+void pcsg_view_receiver_set_review_mode(PCSGReceiver* pcsg_receiver, bool review) {
+    furi_assert(pcsg_receiver);
+    with_view_model(
+        pcsg_receiver->view, PCSGReceiverModel * model, { model->review = review; }, true);
+}
+
 void pcsg_view_receiver_set_item_count(PCSGReceiver* pcsg_receiver, uint16_t count) {
     furi_assert(pcsg_receiver);
     with_view_model(
@@ -218,7 +226,7 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
 
-    elements_button_left(canvas, "Config");
+    if(!model->review) elements_button_left(canvas, "Config");
     //canvas_draw_line(canvas, 46, 51, 125, 51);
 
     bool scrollbar = model->history_item > 4;
@@ -248,7 +256,11 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
 
     canvas_set_color(canvas, ColorBlack);
 
-    if(model->history_item == 0) {
+    if(model->history_item == 0 && model->review) {
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str_aligned(canvas, 64, 26, AlignCenter, AlignCenter, "No messages");
+        canvas_set_font(canvas, FontSecondary);
+    } else if(model->history_item == 0) {
         canvas_draw_icon(canvas, 0, 0, model->ext_module ? &I_Fishing_123x52 : &I_Scanning_123x52);
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str(canvas, 63, 46, "Scanning...");
@@ -257,7 +269,7 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
     }
 
     // Draw RSSI
-    pcsg_view_rssi_draw(canvas, model);
+    if(!model->review) pcsg_view_rssi_draw(canvas, model);
 
     switch(model->bar_show) {
     case PCSGReceiverBarShowLock:
@@ -359,7 +371,12 @@ bool pcsg_view_receiver_input(InputEvent* event, void* context) {
             },
             true);
     } else if(event->key == InputKeyLeft && event->type == InputTypeShort) {
-        pcsg_receiver->callback(PCSGCustomEventViewReceiverConfig, pcsg_receiver->context);
+        bool review = false;
+        with_view_model(
+            pcsg_receiver->view, PCSGReceiverModel * model, { review = model->review; }, false);
+        if(!review) {
+            pcsg_receiver->callback(PCSGCustomEventViewReceiverConfig, pcsg_receiver->context);
+        }
     } else if(event->key == InputKeyOk && event->type == InputTypeShort) {
         with_view_model(
             pcsg_receiver->view,

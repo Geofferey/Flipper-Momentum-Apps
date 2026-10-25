@@ -129,6 +129,7 @@ void pocsag_pager_scene_receiver_on_enter(void* context) {
 
     //Load history to receiver
     pcsg_view_receiver_exit(app->pcsg_receiver);
+    pcsg_view_receiver_set_review_mode(app->pcsg_receiver, false);
     pcsg_view_receiver_set_item_callback(
         app->pcsg_receiver, pocsag_pager_scene_receiver_item_callback, app);
     pcsg_view_receiver_set_item_count(app->pcsg_receiver, pcsg_history_get_item(app->txrx->history));
@@ -173,6 +174,8 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             subghz_receiver_set_rx_callback(app->txrx->receiver, NULL, app);
 
             app->txrx->rx_key_state = PCSGRxKeyStateIDLE;
+            // Close the session log and release its index; it is on SD now.
+            pcsg_history_reset(app->txrx->history);
             pcsg_preset_init(app, "FM95", 439987500, NULL, 0);
             scene_manager_search_and_switch_to_previous_scene(
                 app->scene_manager, POCSAGPagerSceneStart);

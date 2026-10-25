@@ -20,9 +20,12 @@
  * for the list, so the list can grow far beyond what full messages in RAM
  * would allow.
  */
-#define PCSG_HISTORY_LOG_DIR    EXT_PATH("pocsag/logs")
-#define PCSG_HISTORY_LABEL_SIZE 40U
-#define PCSG_HISTORY_MAX_LINE   2048U
+#define PCSG_HISTORY_MAX_LINE 2048U
+
+// The index is allocated in blocks as messages arrive and released on reset,
+// so an idle receiver costs nothing and no single allocation is large.
+#define PCSG_HISTORY_BLOCK_ITEMS 50U
+#define PCSG_HISTORY_BLOCKS      ((PCSG_HISTORY_MAX + PCSG_HISTORY_BLOCK_ITEMS - 1U) / PCSG_HISTORY_BLOCK_ITEMS)
 
 typedef struct {
     uint32_t offset;
@@ -37,7 +40,7 @@ struct PCSGHistory {
     bool has_last_hash;
 
     FuriMutex* mutex;
-    PCSGHistoryItem items[PCSG_HISTORY_MAX];
+    PCSGHistoryItem* blocks[PCSG_HISTORY_BLOCKS];
     uint16_t head;
     uint16_t count;
     uint32_t total;
@@ -54,8 +57,19 @@ struct PCSGHistory {
     FuriString* line;
 };
 
+// Slot for list index idx, allocating its block if this is its first use.
 static PCSGHistoryItem* pcsg_history_item(PCSGHistory* instance, uint16_t idx) {
-    return &instance->items[(instance->head + idx) % PCSG_HISTORY_MAX];
+    const uint16_t position = (instance->head + idx) % PCSG_HISTORY_MAX;
+    PCSGHistoryItem** block = &instance->blocks[position / PCSG_HISTORY_BLOCK_ITEMS];
+    if(!*block) *block = calloc(PCSG_HISTORY_BLOCK_ITEMS, sizeof(PCSGHistoryItem));
+    return &(*block)[position % PCSG_HISTORY_BLOCK_ITEMS];
+}
+
+static void pcsg_history_free_blocks(PCSGHistory* instance) {
+    for(size_t i = 0; i < PCSG_HISTORY_BLOCKS; i++) {
+        free(instance->blocks[i]);
+        instance->blocks[i] = NULL;
+    }
 }
 
 static void pcsg_history_close_log(PCSGHistory* instance) {
@@ -71,7 +85,7 @@ static bool pcsg_history_open_log(PCSGHistory* instance) {
     DateTime datetime;
     furi_hal_rtc_get_datetime(&datetime);
     FuriString* path = furi_string_alloc_printf(
-        "%s/%04u-%02u-%02u_%02u-%02u-%02u.txt",
+        "%s/%04u-%02u-%02u_%02u-%02u-%02u" PCSG_HISTORY_LOG_EXT,
         PCSG_HISTORY_LOG_DIR,
         datetime.year,
         datetime.month,
@@ -96,7 +110,8 @@ static bool pcsg_history_open_log(PCSGHistory* instance) {
 
 // One line for the list: the header without its first-line tag (the FLEX
 // [F6400/A ...] block), ESC markers and "CAP: " dropped, then the message.
-static void pcsg_history_make_label(char* label, const char* ric, const char* message) {
+void pcsg_history_make_label(char* label, size_t size, const char* ric, const char* message) {
+    furi_assert(size);
     const char* newline = strchr(ric, '\n');
     if(newline && newline[1]) ric = newline + 1;
 
@@ -108,7 +123,7 @@ static void pcsg_history_make_label(char* label, const char* ric, const char* me
             text += 7;
             while(*text == '0' && text[1] >= '0' && text[1] <= '9') text++;
         }
-        for(; *text && length + 1 < PCSG_HISTORY_LABEL_SIZE; text++) {
+        for(; *text && length + 1 < size; text++) {
             char c = *text;
             if(c == '\e' || c == '#') continue;
             if(c == '\n' || c == '\r' || c == '\t') c = ' ';
@@ -117,6 +132,26 @@ static void pcsg_history_make_label(char* label, const char* ric, const char* me
         }
     }
     label[length] = '\0';
+}
+
+bool pcsg_history_split_line(char* line, char* fields[PCSGLogFieldCount]) {
+    char* cursor = line;
+    for(size_t i = 0; i < PCSGLogFieldCount; i++) {
+        fields[i] = cursor;
+        if(!cursor) continue;
+        cursor = strchr(cursor, '\t');
+        if(cursor) *cursor++ = '\0';
+    }
+    return fields[PCSGLogFieldMessage] != NULL;
+}
+
+bool pcsg_history_fields_to_flipper(char* const fields[PCSGLogFieldCount], FlipperFormat* output) {
+    // Ric and Message stay escaped; pcsg_block_generic_deserialize() unescapes them.
+    stream_clean(flipper_format_get_raw_stream(output));
+    return flipper_format_write_string_cstr(output, "Protocol", fields[PCSGLogFieldProtocol]) &&
+           flipper_format_write_string_cstr(output, "Ric", fields[PCSGLogFieldRic]) &&
+           flipper_format_write_string_cstr(output, "Message", fields[PCSGLogFieldMessage]) &&
+           flipper_format_rewind(output);
 }
 
 PCSGHistory* pcsg_history_alloc(void) {
@@ -135,6 +170,7 @@ PCSGHistory* pcsg_history_alloc(void) {
 void pcsg_history_free(PCSGHistory* instance) {
     furi_assert(instance);
     pcsg_history_close_log(instance);
+    pcsg_history_free_blocks(instance);
     storage_file_free(instance->file);
     furi_record_close(RECORD_STORAGE);
     flipper_format_free(instance->scratch);
@@ -150,6 +186,7 @@ void pcsg_history_reset(PCSGHistory* instance) {
     furi_assert(instance);
     furi_mutex_acquire(instance->mutex, FuriWaitForever);
     pcsg_history_close_log(instance);
+    pcsg_history_free_blocks(instance);
     instance->head = 0;
     instance->count = 0;
     instance->total = 0;
@@ -206,23 +243,9 @@ FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx) {
                           storage_file_read(instance->file, buffer, item->length) == item->length;
         buffer[read ? item->length : 0] = '\0';
 
-        // Fields: time, frequency, protocol, header, message.
-        char* fields[5] = {0};
-        char* cursor = buffer;
-        for(size_t i = 0; i < COUNT_OF(fields) && cursor; i++) {
-            fields[i] = cursor;
-            cursor = strchr(cursor, '\t');
-            if(cursor) *cursor++ = '\0';
-        }
-
-        if(read && fields[4]) {
-            // Ric and Message stay escaped; pcsg_block_generic_deserialize()
-            // unescapes them.
-            stream_clean(flipper_format_get_raw_stream(instance->scratch));
-            if(flipper_format_write_string_cstr(instance->scratch, "Protocol", fields[2]) &&
-               flipper_format_write_string_cstr(instance->scratch, "Ric", fields[3]) &&
-               flipper_format_write_string_cstr(instance->scratch, "Message", fields[4]) &&
-               flipper_format_rewind(instance->scratch)) {
+        char* fields[PCSGLogFieldCount];
+        if(read && pcsg_history_split_line(buffer, fields)) {
+            if(pcsg_history_fields_to_flipper(fields, instance->scratch)) {
                 result = instance->scratch;
             }
         } else {
@@ -305,7 +328,10 @@ PCSGHistoryStateAddKey
         pcsg_block_generic_unescape(ric, furi_string_get_cstr(instance->ric));
         pcsg_block_generic_unescape(message, furi_string_get_cstr(instance->message));
         pcsg_history_make_label(
-            item->label, furi_string_get_cstr(ric), furi_string_get_cstr(message));
+            item->label,
+            sizeof(item->label),
+            furi_string_get_cstr(ric),
+            furi_string_get_cstr(message));
         furi_string_free(ric);
         furi_string_free(message);
 

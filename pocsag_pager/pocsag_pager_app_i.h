@@ -17,6 +17,7 @@
 #include "pocsag_pager_history.h"
 #include "flex_sampler.h"
 #include "pocsag_pager_settings.h"
+#include "pocsag_pager_log.h"
 
 #include <lib/subghz/subghz_setting.h>
 #include <lib/subghz/subghz_worker.h>
@@ -63,6 +64,11 @@ struct POCSAGPagerApp {
     SubGhzSetting* setting;
     PCSGFilterSettings filter;
     uint8_t config_selected_index;
+
+    // Review Messages
+    PCSGLog* log;
+    FuriString* log_path;
+    uint16_t review_idx;
 };
 
 void pcsg_preset_init(

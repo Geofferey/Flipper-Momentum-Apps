@@ -28,6 +28,13 @@
 #define FLEX_NO_WORD           0xFFU
 #define FLEX_NUMERIC_MAX_WORDS 9U
 
+// Alphanumeric header word: checksum (bits 0-9), continuation (10), fragment
+// (11-12), message number (13-18), retrieval flag (19). A retransmitted copy
+// clears the retrieval flag, which also changes the checksum, so copies are
+// compared on the remaining fields. Layout as built by PortaPack Mayhem's
+// FLEX TX (flex_encode_alpha in firmware/application/external/flex_tx).
+#define FLEX_ALPHA_HEADER_IDENTITY 0x0017FC00UL
+
 #define FLEX_PARTIAL_PAGES        4U
 #define FLEX_PARTIAL_TIMEOUT_MS   (10U * 60U * 1000U)
 #define FLEX_SEEN_PAGES           32U
@@ -126,9 +133,9 @@ struct SubGhzProtocolDecoderFlex {
 
     FlexDecoderStats stats;
 
-    // Incomplete pages waiting for another copy, and pages emitted recently.
-    // Both survive decoder resets.
-    FlexPartialPage partial[FLEX_PARTIAL_PAGES];
+    // Incomplete pages waiting for another copy (allocated on the first one,
+    // about 3.5 KB) and pages emitted recently. Both survive decoder resets.
+    FlexPartialPage* partial;
     FlexSeenPage seen[FLEX_SEEN_PAGES];
     uint8_t seen_next;
     uint32_t merged_words[FLEX_PHASE_WORDS];
@@ -205,6 +212,7 @@ void subghz_protocol_decoder_flex_free(void* context) {
     SubGhzProtocolDecoderFlex* instance = context;
     furi_string_free(instance->generic.result_ric);
     furi_string_free(instance->generic.result_msg);
+    free(instance->partial);
     free(instance);
 }
 
@@ -482,6 +490,15 @@ static bool flex_parse_binary(
     return true;
 }
 
+// The part of a page word that is the same in every copy of the page.
+static uint32_t flex_word_identity(uint8_t type, uint8_t index, uint32_t word) {
+    word &= 0x001FFFFFUL;
+    if(index == 0 && (type == FlexPageTypeAlphanumeric || type == FlexPageTypeSecure)) {
+        word &= FLEX_ALPHA_HEADER_IDENTITY;
+    }
+    return word;
+}
+
 static uint32_t flex_page_hash(
     uint32_t capcode,
     uint8_t type,
@@ -495,7 +512,7 @@ static uint32_t flex_page_hash(
         hash = (hash ^ header[i]) * 16777619UL;
     }
     for(uint16_t i = first; i <= last; i++) {
-        hash = (hash ^ (words[i] & 0x001FFFFFUL)) * 16777619UL;
+        hash = (hash ^ flex_word_identity(type, i - first, words[i])) * 16777619UL;
     }
     // Zero marks an empty slot in the seen list.
     return hash | 1U;
@@ -542,7 +559,10 @@ static bool flex_partial_matches(
     uint8_t agreeing = 0;
     for(uint8_t i = 0; i < length; i++) {
         if(!partial->valid[i] || !valid[first + i]) continue;
-        if(partial->words[i] != words[first + i]) return false;
+        if(flex_word_identity(type, i, partial->words[i]) !=
+           flex_word_identity(type, i, words[first + i])) {
+            return false;
+        }
         agreeing++;
     }
     return agreeing > 0;
@@ -556,6 +576,7 @@ static FlexPartialPage* flex_find_partial(
     const bool valid[FLEX_PHASE_WORDS],
     uint8_t first,
     uint8_t length) {
+    if(!instance->partial) return NULL;
     for(size_t i = 0; i < FLEX_PARTIAL_PAGES; i++) {
         if(flex_partial_matches(
                &instance->partial[i], capcode, type, words, valid, first, length)) {
@@ -605,6 +626,7 @@ static bool flex_repair_page(
     uint8_t first,
     uint8_t last) {
     const uint8_t length = last - first + 1U;
+    if(!instance->partial) instance->partial = calloc(FLEX_PARTIAL_PAGES, sizeof(FlexPartialPage));
     FlexPartialPage* partial =
         flex_find_partial(instance, capcode, type, words, valid, first, length);
 

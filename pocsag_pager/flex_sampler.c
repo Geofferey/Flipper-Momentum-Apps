@@ -10,8 +10,8 @@
 
 #define TAG "FlexSampler"
 
-// 320 ms of samples: the decoder runs every page callback of a frame back to
-// back while the next frame's sync is already arriving.
+// 320 ms of samples (2 KB packed): the decoder runs every page callback of a
+// frame back to back while the next frame's sync is already arriving.
 #define FLEX_SAMPLE_BUFFER_SIZE 8192U
 #define FLEX_SAMPLE_BUFFER_MASK (FLEX_SAMPLE_BUFFER_SIZE - 1U)
 #define FLEX_STATS_LOG_INTERVAL_MS 1000U
@@ -98,8 +98,19 @@ struct FlexSampler {
     uint32_t transition_count;
     uint8_t last_symbol;
     bool last_symbol_valid;
-    uint8_t samples[FLEX_SAMPLE_BUFFER_SIZE];
+    // Allocated only while receiving. 2-bit samples packed four per byte,
+    // earliest in the top bits.
+    uint8_t* samples;
 };
+
+static inline uint8_t flex_sampler_get(const uint8_t* samples, uint16_t index) {
+    return (samples[index >> 2] >> ((3U - (index & 3U)) * 2U)) & 0x03U;
+}
+
+static inline void flex_sampler_put(uint8_t* samples, uint16_t index, uint8_t sample) {
+    const uint8_t shift = (3U - (index & 3U)) * 2U;
+    samples[index >> 2] = (samples[index >> 2] & ~(0x03U << shift)) | (sample << shift);
+}
 
 static void flex_sampler_timer_isr(void* context) {
     FlexSampler* instance = context;
@@ -111,7 +122,7 @@ static void flex_sampler_timer_isr(void* context) {
         const uint8_t sample =
             (furi_hal_gpio_read(instance->data_msb) ? 2U : 0U) |
             (furi_hal_gpio_read(instance->data_lsb) ? 1U : 0U);
-        instance->samples[instance->head] = sample;
+        flex_sampler_put(instance->samples, instance->head, sample);
         instance->sample_count++;
         instance->symbol_count[sample]++;
         instance->head = next;
@@ -137,7 +148,7 @@ static int32_t flex_sampler_thread(void* context) {
 
         bool processed = false;
         while(instance->tail != instance->head) {
-            const uint8_t sample = instance->samples[instance->tail];
+            const uint8_t sample = flex_sampler_get(instance->samples, instance->tail);
             instance->tail = (instance->tail + 1U) & FLEX_SAMPLE_BUFFER_MASK;
             if(instance->last_symbol_valid && sample != instance->last_symbol) {
                 instance->transition_count++;
@@ -237,26 +248,30 @@ FlexSampler* flex_sampler_alloc(
     furi_assert(decoder);
     furi_assert(radio_device);
 
+    // The thread and sample buffer only exist while receiving, so POCSAG and
+    // two-level FLEX sessions do not pay for them.
     FlexSampler* instance = calloc(1, sizeof(FlexSampler));
     instance->decoder = decoder;
     instance->data_msb = subghz_devices_get_data_gpio(radio_device);
     instance->data_lsb = external_radio ? &gpio_ext_pa6 : &gpio_spi_r_miso;
-    instance->thread =
-        furi_thread_alloc_ex("Flex4Sampler", 4096, flex_sampler_thread, instance);
-    furi_thread_set_priority(instance->thread, FuriThreadPriorityHigh);
     return instance;
 }
 
 void flex_sampler_free(FlexSampler* instance) {
     furi_assert(instance);
-    if(instance->running) flex_sampler_stop(instance);
-    furi_thread_free(instance->thread);
+    flex_sampler_stop(instance);
     free(instance);
 }
 
 void flex_sampler_start(FlexSampler* instance) {
     furi_assert(instance);
     furi_assert(!instance->running);
+
+    instance->samples = calloc(1, FLEX_SAMPLE_BUFFER_SIZE / 4U);
+    // The decoder callback chain (history, storage) runs on this thread.
+    instance->thread =
+        furi_thread_alloc_ex("Flex4Sampler", 4096, flex_sampler_thread, instance);
+    furi_thread_set_priority(instance->thread, FuriThreadPriorityHigh);
 
     instance->head = 0;
     instance->tail = 0;
@@ -284,6 +299,10 @@ void flex_sampler_stop(FlexSampler* instance) {
     flex_sampler_timer_stop();
     instance->running = false;
     furi_thread_join(instance->thread);
+    furi_thread_free(instance->thread);
+    instance->thread = NULL;
+    free(instance->samples);
+    instance->samples = NULL;
     instance->head = 0;
     instance->tail = 0;
 }
