@@ -25,12 +25,17 @@ typedef enum {
     PCSGReceiverBarShowLock,
     PCSGReceiverBarShowToUnlockPress,
     PCSGReceiverBarShowUnlock,
+    PCSGReceiverBarShowHoldBack,
 } PCSGReceiverBarShow;
+
+#define HOLD_BACK_HINT_MS 1500
 
 struct PCSGReceiver {
     PCSGLock lock;
     uint8_t lock_count;
     FuriTimer* timer;
+    // Clears the "Hold Back to exit" hint.
+    FuriTimer* hint_timer;
     View* view;
     PCSGReceiverCallback callback;
     void* context;
@@ -293,6 +298,9 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
         canvas_draw_icon(canvas, 64, 55, &I_Unlock_7x8);
         canvas_draw_str(canvas, 74, 62, "Unlocked");
         break;
+    case PCSGReceiverBarShowHoldBack:
+        canvas_draw_str(canvas, 44, 62, "Hold Back to exit");
+        break;
     default:
         canvas_draw_str(canvas, 44, 62, furi_string_get_cstr(model->frequency_str));
         canvas_draw_str(canvas, 79, 62, furi_string_get_cstr(model->preset_str));
@@ -316,6 +324,20 @@ static void pcsg_view_receiver_timer_callback(void* context) {
         pcsg_receiver->callback(PCSGCustomEventViewReceiverUnlock, pcsg_receiver->context);
     }
     pcsg_receiver->lock_count = 0;
+}
+
+static void pcsg_view_receiver_hint_timer_callback(void* context) {
+    furi_assert(context);
+    PCSGReceiver* pcsg_receiver = context;
+    with_view_model(
+        pcsg_receiver->view,
+        PCSGReceiverModel * model,
+        {
+            if(model->bar_show == PCSGReceiverBarShowHoldBack) {
+                model->bar_show = PCSGReceiverBarShowDefault;
+            }
+        },
+        true);
 }
 
 bool pcsg_view_receiver_input(InputEvent* event, void* context) {
@@ -348,8 +370,23 @@ bool pcsg_view_receiver_input(InputEvent* event, void* context) {
         return true;
     }
 
-    if(event->key == InputKeyBack && event->type == InputTypeShort) {
-        pcsg_receiver->callback(PCSGCustomEventViewReceiverBack, pcsg_receiver->context);
+    if(event->key == InputKeyBack) {
+        // Leaving the receiver ends the session, so it takes a long press;
+        // a short press only shows a hint. Reviewing a log leaves on a short
+        // press as usual.
+        bool review = false;
+        with_view_model(
+            pcsg_receiver->view, PCSGReceiverModel * model, { review = model->review; }, false);
+        if(event->type == (review ? InputTypeShort : InputTypeLong)) {
+            pcsg_receiver->callback(PCSGCustomEventViewReceiverBack, pcsg_receiver->context);
+        } else if(!review && event->type == InputTypeShort) {
+            with_view_model(
+                pcsg_receiver->view,
+                PCSGReceiverModel * model,
+                { model->bar_show = PCSGReceiverBarShowHoldBack; },
+                true);
+            furi_timer_start(pcsg_receiver->hint_timer, HOLD_BACK_HINT_MS);
+        }
     } else if(
         event->key == InputKeyUp &&
         (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
@@ -414,6 +451,7 @@ void pcsg_view_receiver_exit(void* context) {
         },
         false);
     furi_timer_stop(pcsg_receiver->timer);
+    furi_timer_stop(pcsg_receiver->hint_timer);
 }
 
 PCSGReceiver* pcsg_view_receiver_alloc() {
@@ -443,6 +481,8 @@ PCSGReceiver* pcsg_view_receiver_alloc() {
         true);
     pcsg_receiver->timer =
         furi_timer_alloc(pcsg_view_receiver_timer_callback, FuriTimerTypeOnce, pcsg_receiver);
+    pcsg_receiver->hint_timer = furi_timer_alloc(
+        pcsg_view_receiver_hint_timer_callback, FuriTimerTypeOnce, pcsg_receiver);
     return pcsg_receiver;
 }
 
@@ -459,6 +499,7 @@ void pcsg_view_receiver_free(PCSGReceiver* pcsg_receiver) {
         },
         false);
     furi_timer_free(pcsg_receiver->timer);
+    furi_timer_free(pcsg_receiver->hint_timer);
     view_free(pcsg_receiver->view);
     free(pcsg_receiver);
 }
