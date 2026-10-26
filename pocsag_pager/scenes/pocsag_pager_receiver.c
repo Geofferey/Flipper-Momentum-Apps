@@ -146,13 +146,11 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
     void* context) {
     furi_assert(context);
     POCSAGPagerApp* app = context;
-    // FLEX reports each page of a frame from inside its decoder and keeps its
-    // symbol clock running between frames, so it must not be reset here.
-    const bool flex = decoder_base->protocol == &subghz_protocol_flex;
-    if(!pcsg_filter_accepts(&app->filter, decoder_base)) {
-        if(!flex) subghz_receiver_reset(receiver);
-        return;
-    }
+    // Both decoders report each message from inside a transmission (FLEX per
+    // page, POCSAG per address) and reset themselves when it ends, so the
+    // receiver must not be reset here.
+    UNUSED(receiver);
+    if(!pcsg_filter_accepts(&app->filter, decoder_base)) return;
 
     const bool dropped_oldest = pcsg_history_is_full(app->txrx->history);
     if(pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset) ==
@@ -164,7 +162,6 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
         notification_message(app->notifications, &sequence_blink_green_10);
         notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
     }
-    if(!flex) subghz_receiver_reset(receiver);
     app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
 }
 

@@ -11,6 +11,10 @@ static uint32_t* pocsag_pager_scene_capcode_input_field(POCSAGPagerApp* app) {
         return &app->filter.frame_min;
     case PCSGNumberFieldFrameMax:
         return &app->filter.frame_max;
+    case PCSGNumberFieldRicMin:
+        return &app->filter.ric_min;
+    case PCSGNumberFieldRicMax:
+        return &app->filter.ric_max;
     default:
         return &app->filter.capcode_min;
     }
@@ -28,17 +32,37 @@ void pocsag_pager_scene_capcode_input_on_enter(void* context) {
     const uint32_t field =
         scene_manager_get_scene_state(app->scene_manager, POCSAGPagerSceneCapcodeInput);
     const bool frame = field == PCSGNumberFieldFrameMin || field == PCSGNumberFieldFrameMax;
-    const PCSGCapcodeFilter mode = frame ? app->filter.frame_filter : app->filter.capcode_filter;
+    const bool ric = field == PCSGNumberFieldRicMin || field == PCSGNumberFieldRicMax;
+    const PCSGCapcodeFilter mode = frame ? app->filter.frame_filter :
+                                   ric   ? app->filter.ric_filter :
+                                           app->filter.capcode_filter;
+    const bool range = mode == PCSGCapcodeFilterRange;
 
     const char* header;
-    if(field == PCSGNumberFieldCapcodeMax) {
+    uint32_t max = PCSG_CAPCODE_MAX;
+    switch(field) {
+    case PCSGNumberFieldCapcodeMax:
         header = "Capcode max";
-    } else if(field == PCSGNumberFieldFrameMax) {
+        break;
+    case PCSGNumberFieldFrameMin:
+        header = range ? "Frame min (0-127)" : "Frame (0-127)";
+        max = PCSG_FRAME_MAX;
+        break;
+    case PCSGNumberFieldFrameMax:
         header = "Frame max (0-127)";
-    } else if(frame) {
-        header = mode == PCSGCapcodeFilterRange ? "Frame min (0-127)" : "Frame (0-127)";
-    } else {
-        header = mode == PCSGCapcodeFilterRange ? "Capcode min" : "Capcode";
+        max = PCSG_FRAME_MAX;
+        break;
+    case PCSGNumberFieldRicMin:
+        header = range ? "RIC min" : "RIC";
+        max = PCSG_RIC_MAX;
+        break;
+    case PCSGNumberFieldRicMax:
+        header = "RIC max";
+        max = PCSG_RIC_MAX;
+        break;
+    default:
+        header = range ? "Capcode min" : "Capcode";
+        break;
     }
 
     number_input_set_header_text(app->number_input, header);
@@ -48,7 +72,7 @@ void pocsag_pager_scene_capcode_input_on_enter(void* context) {
         app,
         *pocsag_pager_scene_capcode_input_field(app),
         0,
-        frame ? PCSG_FRAME_MAX : PCSG_CAPCODE_MAX);
+        max);
     view_dispatcher_switch_to_view(app->view_dispatcher, POCSAGPagerViewNumberInput);
 }
 

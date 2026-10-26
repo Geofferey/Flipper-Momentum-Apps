@@ -11,3 +11,6 @@
 #define SUBGHZ_PROTOCOL_POCSAG_NAME "POCSAG"
 
 extern const SubGhzProtocol subghz_protocol_pocsag;
+
+/** RIC (pager address) of the message most recently passed to the callback. */
+uint32_t subghz_protocol_decoder_pocsag_get_ric(void* context);

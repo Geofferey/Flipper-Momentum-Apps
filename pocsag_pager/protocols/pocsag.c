@@ -188,15 +188,11 @@ static bool pocsag_decode_message_word(SubGhzProtocolDecoderPocsag* instance, ui
 }
 
 // Function called when current message got decoded, but other messages might follow
+// Emit the message for the current address as its own entry, so each entry
+// has exactly one RIC; a transmission can carry messages for many pagers.
 static bool pocsag_message_done(SubGhzProtocolDecoderPocsag* instance) {
-    // Messages of one transmission are joined; cut the newest one to fit
-    // rather than dropping the transmission.
-    const size_t used = furi_string_size(instance->done_msg);
-    const size_t room = used + 4U < POCSAG_MAX_MESSAGE_CHARS ?
-                            POCSAG_MAX_MESSAGE_CHARS - used - 4U :
-                            0U;
-    if(furi_string_size(instance->msg) > room) {
-        furi_string_left(instance->msg, room);
+    if(furi_string_size(instance->msg) > POCSAG_MAX_MESSAGE_CHARS - 3U) {
+        furi_string_left(instance->msg, POCSAG_MAX_MESSAGE_CHARS - 3U);
         instance->overflowed = true;
     }
     if(instance->overflowed) {
@@ -204,7 +200,6 @@ static bool pocsag_message_done(SubGhzProtocolDecoderPocsag* instance) {
         instance->overflowed = false;
     }
 
-    // append the message to the long-term storage string
     furi_string_printf(
         instance->generic.result_ric,
         "[P%lu]\e#RIC: %" PRIu32 "\e# | ",
@@ -212,17 +207,18 @@ static bool pocsag_message_done(SubGhzProtocolDecoderPocsag* instance) {
         instance->ric);
     furi_string_cat_str(instance->generic.result_ric, func_msg[instance->func]);
     if(instance->func != POCSAG_FUNC_ALERT1) {
-        furi_string_cat(instance->done_msg, instance->msg);
+        furi_string_set(instance->done_msg, instance->msg);
+    } else {
+        furi_string_reset(instance->done_msg);
     }
-
-    furi_string_cat_str(instance->done_msg, " ");
-
     furi_string_set(instance->generic.result_msg, instance->done_msg);
 
     // reset the state
     instance->char_bits = 0;
     instance->char_data = 0;
     furi_string_reset(instance->msg);
+
+    if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
     return true;
 }
 
@@ -289,13 +285,14 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
         // in non-reset state we faced the error signal - we reached the end of the packet, flush data
         FURI_LOG_D(
             TAG,
-            "End: step %d, %s, %u chars",
+            "End: step %d, %s, %u chars pending",
             (int)instance->decoder.parser_step,
             instance->inverted ? "inverted" : "normal",
-            (unsigned)furi_string_size(instance->done_msg));
-        if(furi_string_size(instance->done_msg) > 0) {
-            if(instance->base.callback)
-                instance->base.callback(&instance->base, instance->base.context);
+            (unsigned)furi_string_size(instance->msg));
+        // Earlier messages were emitted as they completed; keep a message
+        // that the end of the signal cut off.
+        if(instance->decoder.parser_step == PocsagDecoderStepMessage) {
+            pocsag_message_done(instance);
         }
         subghz_protocol_decoder_pocsag_reset(context);
         return;
@@ -399,10 +396,17 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
     }
 }
 
+uint32_t subghz_protocol_decoder_pocsag_get_ric(void* context) {
+    furi_assert(context);
+    const SubGhzProtocolDecoderPocsag* instance = context;
+    return instance->ric;
+}
+
 uint8_t subghz_protocol_decoder_pocsag_get_hash_data(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderPocsag* instance = context;
-    uint8_t hash = 0;
+    // Include the RIC: one message is often sent to several pagers in a row.
+    uint8_t hash = instance->ric ^ (instance->ric >> 8) ^ (instance->ric >> 16);
     for(size_t i = 0; i < furi_string_size(instance->done_msg); i++)
         hash ^= furi_string_get_char(instance->done_msg, i);
     return hash;

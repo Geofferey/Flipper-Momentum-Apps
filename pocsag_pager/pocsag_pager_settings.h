@@ -23,6 +23,9 @@ typedef enum {
     PCSGCapcodeFilterCount,
 } PCSGCapcodeFilter;
 
+/** Highest POCSAG RIC (21-bit address). */
+#define PCSG_RIC_MAX 2097151U
+
 /** Highest FLEX frame number (128 frames per 4-minute cycle). */
 #define PCSG_FRAME_MAX 127U
 
@@ -32,6 +35,8 @@ typedef enum {
     PCSGNumberFieldCapcodeMax,
     PCSGNumberFieldFrameMin,
     PCSGNumberFieldFrameMax,
+    PCSGNumberFieldRicMin,
+    PCSGNumberFieldRicMax,
 } PCSGNumberField;
 
 /** FLEX phase to show: all, or one of A-D. */
@@ -96,6 +101,10 @@ typedef struct {
     PCSGCapcodeFilter frame_filter;
     uint32_t frame_min;
     uint32_t frame_max;
+    // POCSAG only; FLEX capcodes have their own filter.
+    PCSGCapcodeFilter ric_filter;
+    uint32_t ric_min;
+    uint32_t ric_max;
     bool hide_duplicates;
     bool hide_encrypted;
     // Log to one temp file destroyed on exit instead of a kept log per session.

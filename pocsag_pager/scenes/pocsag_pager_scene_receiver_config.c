@@ -17,6 +17,9 @@ enum PCSGSettingIndex {
     PCSGSettingIndexCapcodeFilter,
     PCSGSettingIndexCapcodeMin,
     PCSGSettingIndexCapcodeMax,
+    PCSGSettingIndexRicFilter,
+    PCSGSettingIndexRicMin,
+    PCSGSettingIndexRicMax,
     PCSGSettingIndexFlexPhase,
     PCSGSettingIndexFrameFilter,
     PCSGSettingIndexFrameMin,
@@ -96,6 +99,7 @@ const char* const capcode_filter_text[PCSGCapcodeFilterCount] = {
 
 // The maximum is only used in range mode; its text shows that.
 static VariableItem* capcode_max_item;
+static VariableItem* ric_max_item;
 static VariableItem* frame_max_item;
 
 #define HOPPING_COUNT 2
@@ -245,6 +249,22 @@ static void pocsag_pager_scene_receiver_config_update_capcode_max(POCSAGPagerApp
     }
 }
 
+static void pocsag_pager_scene_receiver_config_update_ric_max(POCSAGPagerApp* app) {
+    if(app->filter.ric_filter == PCSGCapcodeFilterRange) {
+        pocsag_pager_scene_receiver_config_set_capcode_text(ric_max_item, app->filter.ric_max);
+    } else {
+        variable_item_set_current_value_text(ric_max_item, "--");
+    }
+}
+
+static void pocsag_pager_scene_receiver_config_set_ric_filter(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, capcode_filter_text[index]);
+    app->filter.ric_filter = index;
+    pocsag_pager_scene_receiver_config_update_ric_max(app);
+}
+
 static void pocsag_pager_scene_receiver_config_update_frame_max(POCSAGPagerApp* app) {
     if(app->filter.frame_filter == PCSGCapcodeFilterRange) {
         pocsag_pager_scene_receiver_config_set_capcode_text(frame_max_item, app->filter.frame_max);
@@ -366,6 +386,11 @@ static void
         app->filter.capcode_filter == PCSGCapcodeFilterRange) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, PCSGCustomEventSceneSettingCapcodeMax);
+    } else if(index == PCSGSettingIndexRicMin) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, PCSGCustomEventSceneSettingRicMin);
+    } else if(
+        index == PCSGSettingIndexRicMax && app->filter.ric_filter == PCSGCapcodeFilterRange) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, PCSGCustomEventSceneSettingRicMax);
     } else if(index == PCSGSettingIndexFrameMin) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, PCSGCustomEventSceneSettingFrameMin);
@@ -536,6 +561,21 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     item = variable_item_list_add(
         app->variable_item_list,
+        "RIC Filter:",
+        PCSGCapcodeFilterCount,
+        pocsag_pager_scene_receiver_config_set_ric_filter,
+        app);
+    variable_item_set_current_value_index(item, app->filter.ric_filter);
+    variable_item_set_current_value_text(item, capcode_filter_text[app->filter.ric_filter]);
+
+    item = variable_item_list_add(app->variable_item_list, "RIC:", 1, NULL, app);
+    pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.ric_min);
+
+    ric_max_item = variable_item_list_add(app->variable_item_list, "RIC Max:", 1, NULL, app);
+    pocsag_pager_scene_receiver_config_update_ric_max(app);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
         "FLEX Phase:",
         PCSGPhaseFilterCount,
         pocsag_pager_scene_receiver_config_set_phase_filter,
@@ -585,10 +625,16 @@ bool pocsag_pager_scene_receiver_config_on_event(void* context, SceneManagerEven
             event.event == PCSGCustomEventSceneSettingCapcodeMin ||
             event.event == PCSGCustomEventSceneSettingCapcodeMax ||
             event.event == PCSGCustomEventSceneSettingFrameMin ||
-            event.event == PCSGCustomEventSceneSettingFrameMax) {
+            event.event == PCSGCustomEventSceneSettingFrameMax ||
+            event.event == PCSGCustomEventSceneSettingRicMin ||
+            event.event == PCSGCustomEventSceneSettingRicMax) {
             PCSGNumberField field = PCSGNumberFieldCapcodeMin;
             if(event.event == PCSGCustomEventSceneSettingCapcodeMax) {
                 field = PCSGNumberFieldCapcodeMax;
+            } else if(event.event == PCSGCustomEventSceneSettingRicMin) {
+                field = PCSGNumberFieldRicMin;
+            } else if(event.event == PCSGCustomEventSceneSettingRicMax) {
+                field = PCSGNumberFieldRicMax;
             } else if(event.event == PCSGCustomEventSceneSettingFrameMin) {
                 field = PCSGNumberFieldFrameMin;
             } else if(event.event == PCSGCustomEventSceneSettingFrameMax) {
@@ -609,6 +655,7 @@ void pocsag_pager_scene_receiver_config_on_exit(void* context) {
     variable_item_list_set_selected_item(app->variable_item_list, 0);
     variable_item_list_reset(app->variable_item_list);
     capcode_max_item = NULL;
+    ric_max_item = NULL;
     frame_max_item = NULL;
     pcsg_settings_save(app);
 }

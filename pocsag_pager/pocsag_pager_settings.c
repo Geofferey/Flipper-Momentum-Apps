@@ -2,6 +2,7 @@
 
 #include "pocsag_pager_app_i.h"
 #include "protocols/flex.h"
+#include "protocols/pocsag.h"
 
 #include <flipper_format/flipper_format.h>
 #include <storage/storage.h>
@@ -34,8 +35,14 @@ bool pcsg_filter_accepts(
     furi_assert(filter);
     furi_assert(decoder_base);
 
-    // POCSAG joins every message of a transmission into one entry, so the
-    // filters only apply to FLEX, which reports one page at a time.
+    // POCSAG: only the RIC filter applies; the other filters are FLEX ones.
+    if(decoder_base->protocol == &subghz_protocol_pocsag) {
+        return pcsg_filter_in_range(
+            filter->ric_filter,
+            filter->ric_min,
+            filter->ric_max,
+            subghz_protocol_decoder_pocsag_get_ric(decoder_base));
+    }
     if(decoder_base->protocol != &subghz_protocol_flex) return true;
 
     FlexPageInfo page;
@@ -147,6 +154,16 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "FrameMax", &value, 1) && value <= PCSG_FRAME_MAX) {
             filter->frame_max = value;
         }
+        if(flipper_format_read_uint32(file, "RicFilter", &value, 1) &&
+           value < PCSGCapcodeFilterCount) {
+            filter->ric_filter = value;
+        }
+        if(flipper_format_read_uint32(file, "RicMin", &value, 1) && value <= PCSG_RIC_MAX) {
+            filter->ric_min = value;
+        }
+        if(flipper_format_read_uint32(file, "RicMax", &value, 1) && value <= PCSG_RIC_MAX) {
+            filter->ric_max = value;
+        }
         if(flipper_format_read_uint32(file, "Alert", &value, 1) && value < PCSGAlertCount) {
             filter->alert = value;
         }
@@ -212,6 +229,10 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "FrameFilter", &value, 1)) break;
         if(!flipper_format_write_uint32(file, "FrameMin", &filter->frame_min, 1)) break;
         if(!flipper_format_write_uint32(file, "FrameMax", &filter->frame_max, 1)) break;
+        value = filter->ric_filter;
+        if(!flipper_format_write_uint32(file, "RicFilter", &value, 1)) break;
+        if(!flipper_format_write_uint32(file, "RicMin", &filter->ric_min, 1)) break;
+        if(!flipper_format_write_uint32(file, "RicMax", &filter->ric_max, 1)) break;
         value = filter->alert;
         if(!flipper_format_write_uint32(file, "Alert", &value, 1)) break;
         value = filter->signal_sound;

@@ -17,7 +17,9 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
 
     // Keep logging while a message is open. The list is rebuilt from history
     // on return, so only the selection needs to follow a dropped oldest entry.
-    const bool flex = decoder_base->protocol == &subghz_protocol_flex;
+    // Decoders reset themselves at the end of a transmission; see the
+    // receiver scene.
+    UNUSED(receiver);
     if(pcsg_filter_accepts(&app->filter, decoder_base)) {
         const bool dropped_oldest = pcsg_history_is_full(app->txrx->history);
         if(pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset) ==
@@ -27,7 +29,6 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
             app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
         }
     }
-    if(!flex) subghz_receiver_reset(receiver);
 }
 
 void pocsag_pager_scene_receiver_info_on_enter(void* context) {
