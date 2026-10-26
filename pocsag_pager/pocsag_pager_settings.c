@@ -13,6 +13,21 @@
 #define PCSG_SETTINGS_FILE_TYPE "POCSAG Pager Settings"
 #define PCSG_SETTINGS_VERSION   1U
 
+static bool pcsg_filter_in_range(
+    PCSGCapcodeFilter mode,
+    uint32_t first,
+    uint32_t second,
+    uint32_t value) {
+    switch(mode) {
+    case PCSGCapcodeFilterExact:
+        return value == first;
+    case PCSGCapcodeFilterRange:
+        return value >= MIN(first, second) && value <= MAX(first, second);
+    default:
+        return true;
+    }
+}
+
 bool pcsg_filter_accepts(
     const PCSGFilterSettings* filter,
     SubGhzProtocolDecoderBase* decoder_base) {
@@ -46,15 +61,14 @@ bool pcsg_filter_accepts(
         break;
     }
 
-    switch(filter->capcode_filter) {
-    case PCSGCapcodeFilterExact:
-        return page.capcode == filter->capcode_min;
-    case PCSGCapcodeFilterRange:
-        return page.capcode >= MIN(filter->capcode_min, filter->capcode_max) &&
-               page.capcode <= MAX(filter->capcode_min, filter->capcode_max);
-    default:
-        return true;
+    if(filter->phase_filter != PCSGPhaseFilterAll &&
+       page.phase != 'A' + (filter->phase_filter - PCSGPhaseFilterA)) {
+        return false;
     }
+    return pcsg_filter_in_range(
+               filter->capcode_filter, filter->capcode_min, filter->capcode_max, page.capcode) &&
+           pcsg_filter_in_range(
+               filter->frame_filter, filter->frame_min, filter->frame_max, page.frame);
 }
 
 void pcsg_settings_load(POCSAGPagerApp* app) {
@@ -119,6 +133,20 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "LogTemp", &value, 1)) {
             filter->log_temp = value != 0;
         }
+        if(flipper_format_read_uint32(file, "FlexPhase", &value, 1) &&
+           value < PCSGPhaseFilterCount) {
+            filter->phase_filter = value;
+        }
+        if(flipper_format_read_uint32(file, "FrameFilter", &value, 1) &&
+           value < PCSGCapcodeFilterCount) {
+            filter->frame_filter = value;
+        }
+        if(flipper_format_read_uint32(file, "FrameMin", &value, 1) && value <= PCSG_FRAME_MAX) {
+            filter->frame_min = value;
+        }
+        if(flipper_format_read_uint32(file, "FrameMax", &value, 1) && value <= PCSG_FRAME_MAX) {
+            filter->frame_max = value;
+        }
         if(flipper_format_read_uint32(file, "Alert", &value, 1) && value < PCSGAlertCount) {
             filter->alert = value;
         }
@@ -178,6 +206,12 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "FlexEncrypted", &value, 1)) break;
         value = filter->log_temp;
         if(!flipper_format_write_uint32(file, "LogTemp", &value, 1)) break;
+        value = filter->phase_filter;
+        if(!flipper_format_write_uint32(file, "FlexPhase", &value, 1)) break;
+        value = filter->frame_filter;
+        if(!flipper_format_write_uint32(file, "FrameFilter", &value, 1)) break;
+        if(!flipper_format_write_uint32(file, "FrameMin", &filter->frame_min, 1)) break;
+        if(!flipper_format_write_uint32(file, "FrameMax", &filter->frame_max, 1)) break;
         value = filter->alert;
         if(!flipper_format_write_uint32(file, "Alert", &value, 1)) break;
         value = filter->signal_sound;

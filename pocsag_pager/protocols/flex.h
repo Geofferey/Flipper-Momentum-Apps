@@ -55,6 +55,9 @@ typedef struct {
     bool repaired;
     /** A FLEX secure page, or text that looks like an encrypted payload. */
     bool encrypted;
+    /** Phase (A-D) and frame (0-127) of the page, or of a joined message's first part. */
+    char phase;
+    uint8_t frame;
 } FlexPageInfo;
 
 /** Rate at which RX_HARD_DATA is sampled: 8 samples per 3200-baud symbol. */

@@ -7,6 +7,8 @@ typedef enum {
     PCSGCustomEventSceneSettingLock,
     PCSGCustomEventSceneSettingCapcodeMin,
     PCSGCustomEventSceneSettingCapcodeMax,
+    PCSGCustomEventSceneSettingFrameMin,
+    PCSGCustomEventSceneSettingFrameMax,
     PCSGCustomEventSceneCapcodeInputDone,
 
     PCSGCustomEventViewReceiverOK,

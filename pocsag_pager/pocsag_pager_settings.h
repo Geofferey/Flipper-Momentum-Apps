@@ -15,12 +15,34 @@ typedef enum {
     PCSGTypeFilterCount,
 } PCSGTypeFilter;
 
+/** Off / Exact / Range filter, used for capcodes and FLEX frames. */
 typedef enum {
     PCSGCapcodeFilterOff,
     PCSGCapcodeFilterExact,
     PCSGCapcodeFilterRange,
     PCSGCapcodeFilterCount,
 } PCSGCapcodeFilter;
+
+/** Highest FLEX frame number (128 frames per 4-minute cycle). */
+#define PCSG_FRAME_MAX 127U
+
+/** Field edited by the number entry scene (its scene state). */
+typedef enum {
+    PCSGNumberFieldCapcodeMin,
+    PCSGNumberFieldCapcodeMax,
+    PCSGNumberFieldFrameMin,
+    PCSGNumberFieldFrameMax,
+} PCSGNumberField;
+
+/** FLEX phase to show: all, or one of A-D. */
+typedef enum {
+    PCSGPhaseFilterAll,
+    PCSGPhaseFilterA,
+    PCSGPhaseFilterB,
+    PCSGPhaseFilterC,
+    PCSGPhaseFilterD,
+    PCSGPhaseFilterCount,
+} PCSGPhaseFilter;
 
 /** Notification for a new message; the LED always blinks. */
 typedef enum {
@@ -70,6 +92,10 @@ typedef struct {
     PCSGCapcodeFilter capcode_filter;
     uint32_t capcode_min;
     uint32_t capcode_max;
+    PCSGPhaseFilter phase_filter;
+    PCSGCapcodeFilter frame_filter;
+    uint32_t frame_min;
+    uint32_t frame_max;
     bool hide_duplicates;
     bool hide_encrypted;
     // Log to one temp file destroyed on exit instead of a kept log per session.

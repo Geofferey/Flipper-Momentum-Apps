@@ -110,7 +110,9 @@ typedef struct {
     uint8_t message_number;
     uint8_t next_fragment;
     uint8_t parts;
+    // Phase and frame of the first part received, where the pager listens.
     char phase;
+    uint8_t frame;
     // Allocated while the message is being joined.
     FuriString* text;
 } FlexFragmentSlot;
@@ -173,6 +175,9 @@ struct SubGhzProtocolDecoderFlex {
     bool page_suspect;
     bool page_duplicate;
     bool page_encrypted;
+    // Where the page (or a joined message's first part) was received.
+    char page_phase;
+    uint8_t page_frame;
 
     uint32_t capcode;
     uint8_t page_type;
@@ -646,6 +651,8 @@ static bool flex_text_looks_encrypted(const char* text) {
 static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
     const char* message = furi_string_get_cstr(instance->generic.result_msg);
     const uint32_t hash = flex_text_hash(instance->capcode, instance->page_type, message);
+    instance->page_phase = instance->phase;
+    instance->page_frame = instance->frame;
     instance->page_encrypted =
         instance->page_type == FlexPageTypeSecure ||
         (instance->page_type == FlexPageTypeAlphanumeric && !strncmp(message, "ALN: ", 5) &&
@@ -667,8 +674,12 @@ static void flex_fragment_flush(
 
     instance->page_repaired = false;
     instance->page_suspect = false;
+    // Show and filter a joined message by where its first part arrived.
+    const uint8_t frame = instance->frame;
+    instance->frame = slot->frame;
     flex_set_page_header(instance, slot->capcode, slot->type, slot->parts, 'J', slot->phase);
     flex_emit_page(instance);
+    instance->frame = frame;
 
     furi_string_free(slot->text);
     memset(slot, 0, sizeof(FlexFragmentSlot));
@@ -741,6 +752,8 @@ static void flex_fragment_add(
         slot->type = type;
         slot->message_number = message_number;
         slot->text = furi_string_alloc();
+        slot->phase = phase;
+        slot->frame = instance->frame;
         // A later fragment without its start: the beginning is missing.
         if(fragment != 3U) {
             furi_string_set_str(slot->text, FLEX_GAP_MARK);
@@ -760,7 +773,6 @@ static void flex_fragment_add(
     }
     slot->parts++;
     slot->next_fragment = fragment == 3U ? 0U : (fragment + 1U) % 3U;
-    slot->phase = phase;
     slot->tick = furi_get_tick();
 
     if(!continuation) {
@@ -1355,6 +1367,8 @@ void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* inf
     info->duplicate = instance->page_duplicate;
     info->repaired = instance->page_repaired;
     info->encrypted = instance->page_encrypted;
+    info->phase = instance->page_phase;
+    info->frame = instance->page_frame;
     switch(instance->page_type) {
     case FlexPageTypeTone:
         info->kind = FlexPageKindTone;
