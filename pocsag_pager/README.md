@@ -44,7 +44,9 @@ storage.
 
 Built-in radio presets:
 
-- `FM95` for POCSAG
+- `POCSAG` (default) for POCSAG: 58 kHz filter, no carrier-sense squelch
+- `POCSAG-W` for POCSAG at 900 MHz, with a 116 kHz filter for crystal offset
+- `FM95`, the original POCSAG preset (270 kHz filter with carrier sense)
 - `FLEX` for two-level FLEX (1600/2 and 3200/2), about +/-4.76 kHz deviation
 - `FLEX4-3200` and `FLEX4-6400` for four-level FLEX. Both decode every FLEX
   rate; they differ only in the CC1101 data-rate setting.

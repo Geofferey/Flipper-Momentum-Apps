@@ -22,7 +22,7 @@ void pocsag_pager_scene_about_on_enter(void* context) {
     furi_string_cat_printf(temp_str, "\e#%s\n", "Description");
     furi_string_cat_printf(
         temp_str,
-        "Receiving POCSAG and FLEX\npager messages.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect FLEX for 2-level signals and a FLEX4 preset for 4-level. RSSI and hopping are disabled with FLEX4.\n\nFrequencies are in\n/pocsag/settings.txt\nCustom frequencies are at the end of the list.\n\n");
+        "Receiving POCSAG and FLEX\npager messages.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect POCSAG (POCSAG-W at 900 MHz) for POCSAG, FLEX for 2-level FLEX and a FLEX4 preset for 4-level. RSSI and hopping are disabled with FLEX4.\n\nFrequencies are in\n/pocsag/settings.txt\nCustom frequencies are at the end of the list.\n\n");
 
     furi_string_cat_printf(
         temp_str,

@@ -48,6 +48,8 @@ void pcsg_get_frequency_modulation(
             furi_string_set_str(modulation, "F4");
         } else if(!strncmp(preset_name, "FLEX", 4)) {
             furi_string_set_str(modulation, "FX");
+        } else if(!strcmp(preset_name, "POCSAG-W")) {
+            furi_string_set_str(modulation, "PW");
         } else {
             furi_string_printf(modulation, "%.2s", preset_name);
         }

@@ -181,6 +181,30 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
 
     flipper_format_free(temp_fm_preset);
 
+    // POCSAG: two-level FSK with about +/-4.5 kHz deviation. Unlike FM95, no
+    // carrier-sense gating of the data output (MDMCFG2 0x00) and a 58 kHz
+    // channel filter instead of 270 kHz (MDMCFG4 0xF6, which also sets the
+    // data rate to 2400 baud, the fastest POCSAG rate). POCSAG-W widens the
+    // filter to 116 kHz (MDMCFG4 0xB6) for the crystal offset at 900 MHz.
+    FlipperFormat* temp_pocsag_preset = flipper_format_string_alloc();
+    flipper_format_write_string_cstr(
+        temp_pocsag_preset,
+        (const char*)"Custom_preset_data",
+        (const char*)"02 0D 0B 06 08 32 07 04 14 00 13 02 12 00 11 83 10 F6 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
+    flipper_format_rewind(temp_pocsag_preset);
+    subghz_setting_load_custom_preset(app->setting, (const char*)"POCSAG", temp_pocsag_preset);
+    flipper_format_free(temp_pocsag_preset);
+
+    FlipperFormat* temp_pocsag_wide_preset = flipper_format_string_alloc();
+    flipper_format_write_string_cstr(
+        temp_pocsag_wide_preset,
+        (const char*)"Custom_preset_data",
+        (const char*)"02 0D 0B 06 08 32 07 04 14 00 13 02 12 00 11 83 10 B6 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
+    flipper_format_rewind(temp_pocsag_wide_preset);
+    subghz_setting_load_custom_preset(
+        app->setting, (const char*)"POCSAG-W", temp_pocsag_wide_preset);
+    flipper_format_free(temp_pocsag_wide_preset);
+
     FlipperFormat* temp_flex_preset = flipper_format_string_alloc();
     flipper_format_write_string_cstr(
         temp_flex_preset,
@@ -212,7 +236,7 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
 
     // custom presets loading - end
 
-    pcsg_preset_init(app, "FM95", 439987500, NULL, 0);
+    pcsg_preset_init(app, "POCSAG", 439987500, NULL, 0);
 
     app->txrx->hopper_state = PCSGHopperStateOFF;
     app->filter.type_filter = PCSGTypeFilterAll;
