@@ -109,7 +109,13 @@ struct FlexSampler {
     // Tone mode pitch per signal level, lowest frequency first.
     float sound_tones[4];
     uint8_t sound_level;
+    // Tone squelch: the thread sets this from the decoder's lock state so the
+    // tone only plays during a frame, not on the noise between pages. 0xFF in
+    // sound_level marks the speaker as currently silenced.
+    volatile bool sound_gate;
 };
+
+#define FLEX_SOUND_SILENCED 0xFFU
 
 // RX_HARD_DATA symbol to level, as in the FLEX decoder.
 static const uint8_t flex_sampler_levels[] = {1U, 0U, 2U, 3U};
@@ -136,11 +142,17 @@ static void flex_sampler_timer_isr(void* context) {
         if(instance->sound == FlexSamplerSoundRaw) {
             furi_hal_gpio_write(instance->sound_pin, sample & 2U);
         } else if(instance->sound == FlexSamplerSoundTone) {
-            // Retune only when the level changes (at most at the symbol rate).
-            const uint8_t level = flex_sampler_levels[sample];
-            if(level != instance->sound_level) {
-                instance->sound_level = level;
-                furi_hal_speaker_start(instance->sound_tones[level], instance->sound_volume);
+            if(instance->sound_gate) {
+                // Retune only when the level changes (at most at the symbol rate).
+                const uint8_t level = flex_sampler_levels[sample];
+                if(level != instance->sound_level) {
+                    instance->sound_level = level;
+                    furi_hal_speaker_start(instance->sound_tones[level], instance->sound_volume);
+                }
+            } else if(instance->sound_level != FLEX_SOUND_SILENCED) {
+                // Squelch closed: silence the speaker (volume 0 stops the timer).
+                instance->sound_level = FLEX_SOUND_SILENCED;
+                furi_hal_speaker_start(instance->sound_tones[0], 0.0f);
             }
         }
         flex_sampler_put(instance->samples, instance->head, sample);
@@ -182,6 +194,9 @@ static int32_t flex_sampler_thread(void* context) {
             subghz_protocol_decoder_flex_feed_4fsk_sample(instance->decoder, sample);
             processed = true;
         }
+
+        // Open the tone squelch only while the decoder is locked onto a frame.
+        instance->sound_gate = subghz_protocol_decoder_flex_is_locked(instance->decoder);
 
         const uint32_t now = furi_get_tick();
         if(now - last_log_tick >= furi_ms_to_ticks(FLEX_STATS_LOG_INTERVAL_MS)) {

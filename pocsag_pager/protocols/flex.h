@@ -69,5 +69,7 @@ void subghz_protocol_decoder_flex_reset_stats(void* context);
 /** Describe the page most recently passed to the decoder callback. */
 void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* info);
 void subghz_protocol_decoder_flex_get_stats(void* context, FlexDecoderStats* stats);
+/** True while the decoder is locked onto a frame (not hunting for sync). */
+bool subghz_protocol_decoder_flex_is_locked(void* context);
 
 extern const SubGhzProtocol subghz_protocol_flex;

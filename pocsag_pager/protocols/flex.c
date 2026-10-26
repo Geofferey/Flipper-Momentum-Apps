@@ -1394,6 +1394,13 @@ void subghz_protocol_decoder_flex_get_stats(void* context, FlexDecoderStats* sta
     *stats = instance->stats;
 }
 
+bool subghz_protocol_decoder_flex_is_locked(void* context) {
+    furi_assert(context);
+    const SubGhzProtocolDecoderFlex* instance = context;
+    // True once sync is found and the frame is being read (not hunting noise).
+    return instance->state != FlexDecoderStateSync1;
+}
+
 uint8_t subghz_protocol_decoder_flex_get_hash_data(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderFlex* instance = context;
