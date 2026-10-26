@@ -61,6 +61,8 @@ struct SubGhzProtocolDecoderPocsag {
     SubGhzBlockConst* pocsag_timing;
     uint32_t version;
     bool overflowed;
+    // Opposite polarity to the usual one, detected from the frame sync word.
+    bool inverted;
 };
 
 typedef struct SubGhzProtocolDecoderPocsag SubGhzProtocolDecoderPocsag;
@@ -112,6 +114,7 @@ void subghz_protocol_decoder_pocsag_reset(void* context) {
     instance->char_bits = 0;
     instance->char_data = 0;
     instance->overflowed = false;
+    instance->inverted = false;
     furi_string_reset(instance->msg);
     furi_string_reset(instance->done_msg);
     furi_string_reset(instance->generic.result_msg);
@@ -241,6 +244,7 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
 
             if(instance->decoder.decode_count_bit == POCSAG_MIN_SYNC_BITS) {
                 instance->decoder.parser_step = PocsagDecoderStepFoundSync;
+                FURI_LOG_D(TAG, "Preamble, 1200 bps");
             }
         } else if(DURATION_DIFF(duration, pocsag512_const.te_short) < pocsag512_const.te_delta) {
             if(instance->pocsag_timing != &pocsag512_const) {
@@ -254,6 +258,7 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
 
             if(instance->decoder.decode_count_bit == POCSAG_MIN_SYNC_BITS) {
                 instance->decoder.parser_step = PocsagDecoderStepFoundSync;
+                FURI_LOG_D(TAG, "Preamble, 512 bps");
             }
         } else if(DURATION_DIFF(duration, pocsag2400_const.te_short) < pocsag2400_const.te_delta) {
             if(instance->pocsag_timing != &pocsag2400_const) {
@@ -267,6 +272,7 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
 
             if(instance->decoder.decode_count_bit == POCSAG_MIN_SYNC_BITS) {
                 instance->decoder.parser_step = PocsagDecoderStepFoundSync;
+                FURI_LOG_D(TAG, "Preamble, 2400 bps");
             }
         } else if(instance->decoder.decode_count_bit > 0) {
             subghz_protocol_decoder_pocsag_reset(context);
@@ -281,6 +287,12 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
         bits_count++;
     else if(extra > instance->pocsag_timing->te_delta) {
         // in non-reset state we faced the error signal - we reached the end of the packet, flush data
+        FURI_LOG_D(
+            TAG,
+            "End: step %d, %s, %u chars",
+            (int)instance->decoder.parser_step,
+            instance->inverted ? "inverted" : "normal",
+            (unsigned)furi_string_size(instance->done_msg));
         if(furi_string_size(instance->done_msg) > 0) {
             if(instance->base.callback)
                 instance->base.callback(&instance->base, instance->base.context);
@@ -298,16 +310,28 @@ void subghz_protocol_decoder_pocsag_feed(void* context, bool level, uint32_t dur
 
     // handle state machine for every incoming bit
     while(bits_count-- > 0) {
-        subghz_protocol_blocks_add_bit(&instance->decoder, !level);
+        // POCSAG is usually received inverted; the sync word tells otherwise.
+        subghz_protocol_blocks_add_bit(&instance->decoder, instance->inverted ? level : !level);
 
         switch(instance->decoder.parser_step) {
-        case PocsagDecoderStepFoundSync:
-            if((instance->decoder.decode_data & POCSAG_CW_MASK) == POCSAG_FRAME_SYNC_CODE) {
+        case PocsagDecoderStepFoundSync: {
+            // The preamble alternates, so it locks at either polarity. A
+            // complemented sync word means the whole transmission is inverted.
+            const uint32_t word = instance->decoder.decode_data & POCSAG_CW_MASK;
+            const bool complemented = word == ((uint32_t)~POCSAG_FRAME_SYNC_CODE & POCSAG_CW_MASK);
+            if(word == POCSAG_FRAME_SYNC_CODE || complemented) {
+                if(complemented) instance->inverted = true;
+                FURI_LOG_D(
+                    TAG,
+                    "Sync %s, %lu bps",
+                    complemented ? "inverted" : "normal",
+                    instance->version);
                 instance->decoder.parser_step = PocsagDecoderStepFoundPreamble;
                 instance->decoder.decode_count_bit = 0;
                 instance->decoder.decode_data = 0UL;
             }
             break;
+        }
         case PocsagDecoderStepFoundPreamble:
             // handle codewords
             if(instance->decoder.decode_count_bit == POCSAG_CW_BITS) {
