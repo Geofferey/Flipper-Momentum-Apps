@@ -161,6 +161,60 @@ void pcsg_sleep(POCSAGPagerApp* app) {
     app->txrx->txrx_state = PCSGTxRxStateSleep;
 }
 
+PCSGTxStartStatus pcsg_tx_start(POCSAGPagerApp* app) {
+    furi_assert(app);
+    if(app->txrx->txrx_state == PCSGTxRxStateRx) pcsg_rx_end(app);
+    if(app->txrx->txrx_state == PCSGTxRxStateTx) pcsg_tx_stop(app);
+    if(app->txrx->txrx_state == PCSGTxRxStateSleep) return PCSGTxStartInvalid;
+
+    const int64_t corrected_frequency =
+        (int64_t)app->tx_config.frequency + app->tx_config.frequency_correction_hz;
+    if(corrected_frequency <= 0 || corrected_frequency > UINT32_MAX) {
+        return PCSGTxStartInvalid;
+    }
+    const uint32_t tx_frequency = (uint32_t)corrected_frequency;
+
+    const bool flex = app->tx_config.protocol == PagerTxProtocolFlex;
+    uint8_t* preset = pocsag_tx_get_preset(flex ? FLEX_TX_BAUD : app->tx_config.baud);
+    const bool prepared = flex ?
+                              flex_tx_encoder_prepare(app->flex_tx_encoder, &app->tx_config) :
+                              pocsag_tx_encoder_prepare(app->tx_encoder, &app->tx_config);
+    if(!preset || !prepared ||
+       !subghz_devices_is_frequency_valid(app->txrx->radio_device, tx_frequency)) {
+        return PCSGTxStartInvalid;
+    }
+
+    subghz_devices_reset(app->txrx->radio_device);
+    subghz_devices_idle(app->txrx->radio_device);
+    subghz_devices_load_preset(app->txrx->radio_device, FuriHalSubGhzPresetCustom, preset);
+    subghz_devices_set_frequency(app->txrx->radio_device, tx_frequency);
+
+    FuriHalSubGhzAsyncTxCallback tx_callback =
+        flex ? flex_tx_encoder_yield : pocsag_tx_encoder_yield;
+    void* tx_context = flex ? (void*)app->flex_tx_encoder : (void*)app->tx_encoder;
+    if(!subghz_devices_start_async_tx(app->txrx->radio_device, tx_callback, tx_context)) {
+        subghz_devices_idle(app->txrx->radio_device);
+        return PCSGTxStartRestricted;
+    }
+
+    app->txrx->txrx_state = PCSGTxRxStateTx;
+    return PCSGTxStartOk;
+}
+
+bool pcsg_tx_complete(POCSAGPagerApp* app) {
+    furi_assert(app);
+    return app->txrx->txrx_state == PCSGTxRxStateTx &&
+           subghz_devices_is_async_complete_tx(app->txrx->radio_device);
+}
+
+void pcsg_tx_stop(POCSAGPagerApp* app) {
+    furi_assert(app);
+    if(app->txrx->txrx_state != PCSGTxRxStateTx) return;
+    subghz_devices_stop_async_tx(app->txrx->radio_device);
+    subghz_devices_idle(app->txrx->radio_device);
+    app->txrx->txrx_state = PCSGTxRxStateIDLE;
+}
+
 void pcsg_hopper_update(POCSAGPagerApp* app) {
     furi_assert(app);
 

@@ -131,6 +131,13 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
         POCSAGPagerViewNumberInput,
         number_input_get_view(app->number_input));
 
+    // Text Input
+    app->text_input = text_input_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        POCSAGPagerViewTextInput,
+        text_input_get_view(app->text_input));
+
     // Receiver
     app->pcsg_receiver = pcsg_view_receiver_alloc();
     view_dispatcher_add_view(
@@ -249,7 +256,17 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     app->filter.tone_volume = PCSGToneVolumeMedium;
     app->filter.tone_pitch = PCSGTonePitchMedium;
     app->filter.tone_spread = PCSGToneSpreadNormal;
+    app->tx_config.protocol = PagerTxProtocolPocsag;
+    app->tx_config.frequency = app->txrx->preset->frequency;
+    app->tx_config.ric = 0;
+    app->tx_config.function = 3;
+    app->tx_config.baud = 1200;
+    app->tx_config.inverted = false;
+    app->tx_config.frequency_correction_hz = 0;
     pcsg_settings_load(app);
+
+    app->tx_encoder = pocsag_tx_encoder_alloc();
+    app->flex_tx_encoder = flex_tx_encoder_alloc();
 
     app->txrx->history = pcsg_history_alloc();
     app->log = pcsg_log_alloc();
@@ -282,8 +299,12 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
 void pocsag_pager_app_free(POCSAGPagerApp* app) {
     furi_assert(app);
 
+    // Save both receiver and transmitter configuration on every clean exit.
+    pcsg_settings_save(app);
+
     // Radio Devices sleep & off
     if(app->txrx->txrx_state == PCSGTxRxStateRx) pcsg_rx_end(app);
+    if(app->txrx->txrx_state == PCSGTxRxStateTx) pcsg_tx_stop(app);
     if(app->txrx->txrx_state != PCSGTxRxStateSleep) pcsg_sleep(app);
     radio_device_loader_end(app->txrx->radio_device);
 
@@ -305,6 +326,10 @@ void pocsag_pager_app_free(POCSAGPagerApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, POCSAGPagerViewNumberInput);
     number_input_free(app->number_input);
 
+    // Text Input
+    view_dispatcher_remove_view(app->view_dispatcher, POCSAGPagerViewTextInput);
+    text_input_free(app->text_input);
+
     // Receiver
     view_dispatcher_remove_view(app->view_dispatcher, POCSAGPagerViewReceiver);
     pcsg_view_receiver_free(app->pcsg_receiver);
@@ -324,6 +349,8 @@ void pocsag_pager_app_free(POCSAGPagerApp* app) {
     pcsg_log_free(app->log);
     furi_string_free(app->log_path);
     subghz_worker_free(app->txrx->worker);
+    pocsag_tx_encoder_free(app->tx_encoder);
+    flex_tx_encoder_free(app->flex_tx_encoder);
     furi_string_free(app->txrx->preset->name);
     free(app->txrx->preset);
     free(app->txrx);

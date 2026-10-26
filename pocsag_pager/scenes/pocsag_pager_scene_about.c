@@ -22,7 +22,7 @@ void pocsag_pager_scene_about_on_enter(void* context) {
     furi_string_cat_printf(temp_str, "\e#%s\n", "Description");
     furi_string_cat_printf(
         temp_str,
-        "Receiving POCSAG and FLEX\npager messages.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect POCSAG (POCSAG-W at 900 MHz) for POCSAG, FLEX for 2-level FLEX and a FLEX4 preset for 4-level. RSSI and hopping are disabled with FLEX4.\n\nFrequencies are in\n/pocsag/settings.txt\nCustom frequencies are at the end of the list.\n\n");
+        "Receive POCSAG and FLEX pager messages, or send an alphanumeric POCSAG page to your own node.\nDefault frequency is set to\nDAPNET - 439987500\n\nSelect POCSAG (POCSAG-W at 900 MHz) for POCSAG, FLEX for 2-level FLEX and a FLEX4 preset for 4-level. RSSI and hopping are disabled with FLEX4.\n\nFrequencies are in\n/pocsag/settings.txt\nCustom frequencies are at the end of the list.\n\n");
 
     furi_string_cat_printf(
         temp_str,
@@ -31,7 +31,7 @@ void pocsag_pager_scene_about_on_enter(void* context) {
     furi_string_cat_printf(temp_str, "\e#%s\n", "Disclaimer");
     furi_string_cat_printf(
         temp_str,
-        "Only receive traffic you are allowed to. Messages and logs can hold private info: do not share them.\n929-932 MHz is outside the CC1101's rated range: use at your own risk.\n");
+        "Only receive traffic you are allowed to, and transmit only where you are licensed and authorized. Messages and logs can hold private info: do not share them.\n929-932 MHz is outside the CC1101's rated range: use at your own risk.\n");
 
     widget_add_text_box_element(
         app->widget,

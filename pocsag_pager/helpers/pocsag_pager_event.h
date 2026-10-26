@@ -12,6 +12,9 @@ typedef enum {
     PCSGCustomEventSceneSettingRicMin,
     PCSGCustomEventSceneSettingRicMax,
     PCSGCustomEventSceneCapcodeInputDone,
+    PCSGCustomEventTxRicInputDone,
+    PCSGCustomEventTxMessageInputDone,
+    PCSGCustomEventTxSend,
 
     PCSGCustomEventViewReceiverOK,
     PCSGCustomEventViewReceiverConfig,

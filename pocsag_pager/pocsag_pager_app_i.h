@@ -11,6 +11,7 @@
 #include <gui/modules/variable_item_list.h>
 #include <gui/modules/widget.h>
 #include <gui/modules/number_input.h>
+#include <gui/modules/text_input.h>
 #include <notification/notification_messages.h>
 #include "views/pocsag_pager_receiver.h"
 #include "views/pocsag_pager_receiver_info.h"
@@ -18,6 +19,8 @@
 #include "flex_sampler.h"
 #include "pocsag_pager_settings.h"
 #include "pocsag_pager_log.h"
+#include "pocsag_tx.h"
+#include "flex_tx.h"
 
 #include <lib/subghz/subghz_setting.h>
 #include <lib/subghz/subghz_worker.h>
@@ -63,6 +66,7 @@ struct POCSAGPagerApp {
     Submenu* submenu;
     Widget* widget;
     NumberInput* number_input;
+    TextInput* text_input;
     PCSGReceiver* pcsg_receiver;
     PCSGReceiverInfo* pcsg_receiver_info;
     PCSGLock lock;
@@ -71,6 +75,11 @@ struct POCSAGPagerApp {
     uint8_t config_selected_index;
     // Config opened from the main menu rather than the receiver.
     bool config_standalone;
+
+    PocsagTxEncoder* tx_encoder;
+    FlexTxEncoder* flex_tx_encoder;
+    PocsagTxConfig tx_config;
+    uint8_t tx_config_selected_index;
 
     // Review Messages
     PCSGLog* log;
@@ -95,3 +104,13 @@ void pcsg_idle(POCSAGPagerApp* app);
 void pcsg_rx_end(POCSAGPagerApp* app);
 void pcsg_sleep(POCSAGPagerApp* app);
 void pcsg_hopper_update(POCSAGPagerApp* app);
+
+typedef enum {
+    PCSGTxStartOk,
+    PCSGTxStartInvalid,
+    PCSGTxStartRestricted,
+} PCSGTxStartStatus;
+
+PCSGTxStartStatus pcsg_tx_start(POCSAGPagerApp* app);
+bool pcsg_tx_complete(POCSAGPagerApp* app);
+void pcsg_tx_stop(POCSAGPagerApp* app);

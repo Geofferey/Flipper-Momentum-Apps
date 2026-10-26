@@ -118,10 +118,10 @@ typedef struct {
 
 typedef struct POCSAGPagerApp POCSAGPagerApp;
 
-/** Restore frequency, preset, hopping and filters saved on the SD card. */
+/** Restore receiver and transmitter configuration saved on the SD card. */
 void pcsg_settings_load(POCSAGPagerApp* app);
 
-/** Save frequency, preset, hopping and filters to the SD card. */
+/** Save receiver and transmitter configuration to the SD card. */
 void pcsg_settings_save(POCSAGPagerApp* app);
 
 /** Whether a decoded message passes the filters and should enter history. */

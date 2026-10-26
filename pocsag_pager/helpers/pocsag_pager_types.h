@@ -47,6 +47,7 @@ typedef enum {
     POCSAGPagerViewReceiverInfo,
     POCSAGPagerViewWidget,
     POCSAGPagerViewNumberInput,
+    POCSAGPagerViewTextInput,
 } POCSAGPagerView;
 
 /** POCSAGPagerTxRx state */

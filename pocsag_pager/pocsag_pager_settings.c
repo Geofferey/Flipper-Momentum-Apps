@@ -108,6 +108,8 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         } else {
             app->txrx->preset->frequency = frequency;
         }
+        // Older settings files do not have a separate transmit frequency.
+        app->tx_config.frequency = app->txrx->preset->frequency;
 
         if(flipper_format_read_uint32(file, "Hopping", &value, 1)) {
             app->txrx->hopper_state = value ? PCSGHopperStateRunnig : PCSGHopperStateOFF;
@@ -182,6 +184,34 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
            value < PCSGToneSpreadCount) {
             filter->tone_spread = value;
         }
+        if(flipper_format_read_uint32(file, "TxFrequency", &value, 1) &&
+           subghz_devices_is_frequency_valid(app->txrx->radio_device, value)) {
+            app->tx_config.frequency = value;
+        }
+        if(flipper_format_read_uint32(file, "TxRic", &value, 1) && value <= PCSG_TX_RIC_MAX) {
+            app->tx_config.ric = value;
+        }
+        if(flipper_format_read_uint32(file, "TxFunction", &value, 1) && value <= 3U) {
+            app->tx_config.function = value;
+        }
+        if(flipper_format_read_uint32(file, "TxBaud", &value, 1) &&
+           (value == 512U || value == 1200U || value == 2400U)) {
+            app->tx_config.baud = value;
+        }
+        if(flipper_format_read_uint32(file, "TxInverted", &value, 1)) {
+            app->tx_config.inverted = value != 0;
+        }
+        int32_t correction;
+        if(flipper_format_read_int32(file, "TxCorrection", &correction, 1) &&
+           correction >= PCSG_TX_CORRECTION_MIN_HZ &&
+           correction <= PCSG_TX_CORRECTION_MAX_HZ &&
+           correction % PCSG_TX_CORRECTION_STEP_HZ == 0) {
+            app->tx_config.frequency_correction_hz = correction;
+        }
+        if(flipper_format_read_uint32(file, "TxProtocol", &value, 1) &&
+           value < PagerTxProtocolCount) {
+            app->tx_config.protocol = value;
+        }
     } while(false);
 
     furi_string_free(text);
@@ -243,6 +273,22 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "TonePitch", &value, 1)) break;
         value = filter->tone_spread;
         if(!flipper_format_write_uint32(file, "ToneSpread", &value, 1)) break;
+        value = app->tx_config.frequency;
+        if(!flipper_format_write_uint32(file, "TxFrequency", &value, 1)) break;
+        value = app->tx_config.ric;
+        if(!flipper_format_write_uint32(file, "TxRic", &value, 1)) break;
+        value = app->tx_config.function;
+        if(!flipper_format_write_uint32(file, "TxFunction", &value, 1)) break;
+        value = app->tx_config.baud;
+        if(!flipper_format_write_uint32(file, "TxBaud", &value, 1)) break;
+        value = app->tx_config.inverted;
+        if(!flipper_format_write_uint32(file, "TxInverted", &value, 1)) break;
+        if(!flipper_format_write_int32(
+               file, "TxCorrection", &app->tx_config.frequency_correction_hz, 1)) {
+            break;
+        }
+        value = app->tx_config.protocol;
+        if(!flipper_format_write_uint32(file, "TxProtocol", &value, 1)) break;
         saved = true;
     } while(false);
 
