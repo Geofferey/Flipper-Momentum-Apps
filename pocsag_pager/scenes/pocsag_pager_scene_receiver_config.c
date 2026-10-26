@@ -371,6 +371,17 @@ static void pocsag_pager_scene_receiver_config_set_freq_mode(VariableItem* item)
     app->filter.freq_auto = index == 1;
 }
 
+// Index 0 is -PCSG_FREQ_PPM_MAX; the centre index is 0 ppm.
+#define FREQ_PPM_COUNT (2U * PCSG_FREQ_PPM_MAX + 1U)
+static void pocsag_pager_scene_receiver_config_set_freq_corr(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    const int32_t ppm = (int32_t)variable_item_get_current_value_index(item) - PCSG_FREQ_PPM_MAX;
+    app->filter.freq_correction_ppm = ppm;
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%+ld", (long)ppm);
+    variable_item_set_current_value_text(item, buf);
+}
+
 static void pocsag_pager_scene_receiver_config_set_tone_spread(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -414,9 +425,6 @@ static void
         app->filter.frame_filter == PCSGCapcodeFilterRange) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, PCSGCustomEventSceneSettingFrameMax);
-    } else if(index == PCSGSettingIndexFreqCorr) {
-        view_dispatcher_send_custom_event(
-            app->view_dispatcher, PCSGCustomEventSceneSettingFreqPpm);
     }
 }
 
@@ -626,7 +634,15 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, freq_mode_text[value_index]);
 
-    item = variable_item_list_add(app->variable_item_list, "Freq Corr ppm:", 1, NULL, app);
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Freq Corr ppm:",
+        FREQ_PPM_COUNT,
+        pocsag_pager_scene_receiver_config_set_freq_corr,
+        app);
+    value_index = (uint8_t)CLAMP(
+        app->filter.freq_correction_ppm + PCSG_FREQ_PPM_MAX, (int32_t)FREQ_PPM_COUNT - 1, 0);
+    variable_item_set_current_value_index(item, value_index);
     char ppm_buf[8];
     snprintf(ppm_buf, sizeof(ppm_buf), "%+ld", (long)app->filter.freq_correction_ppm);
     variable_item_set_current_value_text(item, ppm_buf);
@@ -660,13 +676,10 @@ bool pocsag_pager_scene_receiver_config_on_event(void* context, SceneManagerEven
             event.event == PCSGCustomEventSceneSettingFrameMin ||
             event.event == PCSGCustomEventSceneSettingFrameMax ||
             event.event == PCSGCustomEventSceneSettingRicMin ||
-            event.event == PCSGCustomEventSceneSettingRicMax ||
-            event.event == PCSGCustomEventSceneSettingFreqPpm) {
+            event.event == PCSGCustomEventSceneSettingRicMax) {
             PCSGNumberField field = PCSGNumberFieldCapcodeMin;
             if(event.event == PCSGCustomEventSceneSettingCapcodeMax) {
                 field = PCSGNumberFieldCapcodeMax;
-            } else if(event.event == PCSGCustomEventSceneSettingFreqPpm) {
-                field = PCSGNumberFieldFreqPpm;
             } else if(event.event == PCSGCustomEventSceneSettingRicMin) {
                 field = PCSGNumberFieldRicMin;
             } else if(event.event == PCSGCustomEventSceneSettingRicMax) {
