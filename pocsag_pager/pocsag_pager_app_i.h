@@ -81,6 +81,11 @@ struct POCSAGPagerApp {
     PocsagTxConfig tx_config;
     uint8_t tx_config_selected_index;
 
+    // RX frequency auto-calibration accumulation.
+    int32_t freq_cal_sum_hz;
+    uint16_t freq_cal_count;
+    uint32_t freq_cal_tick;
+
     // Review Messages
     PCSGLog* log;
     FuriString* log_path;
@@ -104,6 +109,9 @@ void pcsg_idle(POCSAGPagerApp* app);
 void pcsg_rx_end(POCSAGPagerApp* app);
 void pcsg_sleep(POCSAGPagerApp* app);
 void pcsg_hopper_update(POCSAGPagerApp* app);
+int32_t pcsg_freqest_read_hz(POCSAGPagerApp* app);
+void pcsg_retune(POCSAGPagerApp* app);
+void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi);
 
 typedef enum {
     PCSGTxStartOk,

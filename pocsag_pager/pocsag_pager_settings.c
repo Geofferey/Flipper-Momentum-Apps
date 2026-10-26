@@ -14,6 +14,14 @@
 #define PCSG_SETTINGS_FILE_TYPE "POCSAG Pager Settings"
 #define PCSG_SETTINGS_VERSION   1U
 
+uint32_t pcsg_correct_frequency(int32_t ppm, uint32_t nominal) {
+    if(ppm == 0) return nominal;
+    // Round to the nearest Hz; ppm stays well within int64 range at ~1 GHz.
+    const int64_t offset = ((int64_t)nominal * ppm + (ppm >= 0 ? 500000 : -500000)) / 1000000;
+    const int64_t corrected = (int64_t)nominal + offset;
+    return corrected < 0 ? 0 : (uint32_t)corrected;
+}
+
 static bool pcsg_filter_in_range(
     PCSGCapcodeFilter mode,
     uint32_t first,
@@ -184,6 +192,14 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
            value < PCSGToneSpreadCount) {
             filter->tone_spread = value;
         }
+        int32_t svalue;
+        if(flipper_format_read_int32(file, "FreqCorrPpm", &svalue, 1) &&
+           svalue >= -PCSG_FREQ_PPM_MAX && svalue <= PCSG_FREQ_PPM_MAX) {
+            filter->freq_correction_ppm = svalue;
+        }
+        if(flipper_format_read_uint32(file, "FreqAuto", &value, 1)) {
+            filter->freq_auto = value != 0;
+        }
         if(flipper_format_read_uint32(file, "TxFrequency", &value, 1) &&
            subghz_devices_is_frequency_valid(app->txrx->radio_device, value)) {
             app->tx_config.frequency = value;
@@ -273,6 +289,9 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "TonePitch", &value, 1)) break;
         value = filter->tone_spread;
         if(!flipper_format_write_uint32(file, "ToneSpread", &value, 1)) break;
+        if(!flipper_format_write_int32(file, "FreqCorrPpm", &filter->freq_correction_ppm, 1)) break;
+        value = filter->freq_auto;
+        if(!flipper_format_write_uint32(file, "FreqAuto", &value, 1)) break;
         value = app->tx_config.frequency;
         if(!flipper_format_write_uint32(file, "TxFrequency", &value, 1)) break;
         value = app->tx_config.ric;

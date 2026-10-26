@@ -2,6 +2,7 @@
 
 #define TAG "POCSAGPager"
 #include <flipper_format/flipper_format_i.h>
+#include <furi_hal_spi.h>
 
 static bool pcsg_preset_has_mode_prefix(const char* preset_name, const char* prefix) {
     const size_t prefix_length = strlen(prefix);
@@ -75,8 +76,13 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
     furi_assert(
         app->txrx->txrx_state != PCSGTxRxStateRx && app->txrx->txrx_state != PCSGTxRxStateSleep);
 
+    // Compensate the crystal offset so the LO lands on the selected channel.
+    // The displayed frequency stays nominal; only the tuning is shifted.
+    uint32_t tuned = pcsg_correct_frequency(app->filter.freq_correction_ppm, frequency);
+    if(!subghz_devices_is_frequency_valid(app->txrx->radio_device, tuned)) tuned = frequency;
+
     subghz_devices_idle(app->txrx->radio_device);
-    uint32_t value = subghz_devices_set_frequency(app->txrx->radio_device, frequency);
+    uint32_t value = subghz_devices_set_frequency(app->txrx->radio_device, tuned);
 
     // Not need. init in subghz_devices_start_async_tx
     // furi_hal_gpio_init(furi_hal_subghz.cc1101_g0_pin, GpioModeInput, GpioPullNo, GpioSpeedLow);
@@ -161,14 +167,105 @@ void pcsg_sleep(POCSAGPagerApp* app) {
     app->txrx->txrx_state = PCSGTxRxStateSleep;
 }
 
+// CC1101 status register read: header = reg | READ(0x80) | BURST(0x40).
+#define PCSG_CC1101_FREQEST 0x32U
+// FREQEST step = Fxtal / 2^14 = 26e6 / 16384 Hz.
+#define PCSG_FREQEST_STEP_HZ 1587
+
+// Read the demodulator's carrier-offset estimate, in Hz (signed), or INT32_MIN
+// if unavailable. SPI shares MISO with the FLEX4 sampling pin, so this must not
+// be called while the FLEX4 sampler is running.
+int32_t pcsg_freqest_read_hz(POCSAGPagerApp* app) {
+    furi_assert(app);
+    if(flex_sampler_is_running(app->txrx->flex_sampler)) return INT32_MIN;
+
+    const FuriHalSpiBusHandle* handle =
+        radio_device_loader_is_external(app->txrx->radio_device) ?
+            &furi_hal_spi_bus_handle_external :
+            &furi_hal_spi_bus_handle_subghz;
+
+    uint8_t tx[2] = {PCSG_CC1101_FREQEST | 0x80U | 0x40U, 0x00};
+    uint8_t rx[2] = {0};
+    furi_hal_spi_acquire(handle);
+    const bool ok = furi_hal_spi_bus_trx(handle, tx, rx, sizeof(tx), 10);
+    furi_hal_spi_release(handle);
+    if(!ok) return INT32_MIN;
+
+    return (int32_t)(int8_t)rx[1] * PCSG_FREQEST_STEP_HZ;
+}
+
+// Re-apply the current tuning (e.g. after the ppm correction changed). Reuses
+// the proven RX stop/start path, which also re-hands the speaker.
+void pcsg_retune(POCSAGPagerApp* app) {
+    furi_assert(app);
+    if(app->txrx->txrx_state != PCSGTxRxStateRx) return;
+    pcsg_rx_end(app);
+    pcsg_rx(app, app->txrx->preset->frequency);
+}
+
+#define PCSG_FREQ_AUTO_RSSI_MIN     (-80.0f)
+#define PCSG_FREQ_AUTO_MIN_SAMPLES  15U
+#define PCSG_FREQ_AUTO_INTERVAL_MS  3000U
+#define PCSG_FREQ_AUTO_DEADBAND_PPM 2
+
+/*
+ * Closed-loop RX auto-calibration: while a signal is present, average the
+ * demodulator's residual carrier offset and nudge the ppm correction to null
+ * it, re-tuning when it changes. Converges in a few steps, then holds, and
+ * tracks slow temperature drift. Only runs on POCSAG and two-level FLEX;
+ * FLEX4 uses SPI-shared pins, so FREQEST cannot be read while it samples.
+ */
+void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi) {
+    furi_assert(app);
+    if(!app->filter.freq_auto || app->txrx->txrx_state != PCSGTxRxStateRx) return;
+    if(flex_sampler_is_running(app->txrx->flex_sampler)) return;
+
+    if(rssi > PCSG_FREQ_AUTO_RSSI_MIN) {
+        const int32_t hz = pcsg_freqest_read_hz(app);
+        if(hz != INT32_MIN) {
+            app->freq_cal_sum_hz += hz;
+            app->freq_cal_count++;
+        }
+    }
+
+    const uint32_t now = furi_get_tick();
+    if(app->freq_cal_count < PCSG_FREQ_AUTO_MIN_SAMPLES ||
+       now - app->freq_cal_tick < furi_ms_to_ticks(PCSG_FREQ_AUTO_INTERVAL_MS)) {
+        return;
+    }
+
+    const int32_t mean_hz = app->freq_cal_sum_hz / (int32_t)app->freq_cal_count;
+    const uint32_t freq_mhz = app->txrx->preset->frequency / 1000000U;
+    // Residual above the LO reads positive; raise the LO (more ppm) to center it.
+    const int32_t delta_ppm = freq_mhz ? mean_hz / (int32_t)freq_mhz : 0;
+    app->freq_cal_sum_hz = 0;
+    app->freq_cal_count = 0;
+    app->freq_cal_tick = now;
+
+    if(delta_ppm <= PCSG_FREQ_AUTO_DEADBAND_PPM && delta_ppm >= -PCSG_FREQ_AUTO_DEADBAND_PPM) {
+        return;
+    }
+    int32_t ppm = app->filter.freq_correction_ppm + delta_ppm;
+    ppm = CLAMP(ppm, PCSG_FREQ_PPM_MAX, -PCSG_FREQ_PPM_MAX);
+    if(ppm == app->filter.freq_correction_ppm) return;
+
+    app->filter.freq_correction_ppm = ppm;
+    FURI_LOG_I(TAG, "Freq auto: %+ld ppm (residual %+ld Hz)", (long)ppm, (long)mean_hz);
+    pcsg_retune(app);
+    pcsg_settings_save(app);
+}
+
 PCSGTxStartStatus pcsg_tx_start(POCSAGPagerApp* app) {
     furi_assert(app);
     if(app->txrx->txrx_state == PCSGTxRxStateRx) pcsg_rx_end(app);
     if(app->txrx->txrx_state == PCSGTxRxStateTx) pcsg_tx_stop(app);
     if(app->txrx->txrx_state == PCSGTxRxStateSleep) return PCSGTxStartInvalid;
 
+    // Global ppm correction (same as RX) plus the TX per-shot Hz nudge.
+    const uint32_t ppm_corrected =
+        pcsg_correct_frequency(app->filter.freq_correction_ppm, app->tx_config.frequency);
     const int64_t corrected_frequency =
-        (int64_t)app->tx_config.frequency + app->tx_config.frequency_correction_hz;
+        (int64_t)ppm_corrected + app->tx_config.frequency_correction_hz;
     if(corrected_frequency <= 0 || corrected_frequency > UINT32_MAX) {
         return PCSGTxStartInvalid;
     }

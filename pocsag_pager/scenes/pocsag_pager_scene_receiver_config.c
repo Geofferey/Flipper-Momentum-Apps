@@ -24,7 +24,15 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFrameFilter,
     PCSGSettingIndexFrameMin,
     PCSGSettingIndexFrameMax,
+    PCSGSettingIndexFreqMode,
+    PCSGSettingIndexFreqCorr,
     PCSGSettingIndexLock,
+};
+
+#define FREQ_MODE_COUNT 2
+const char* const freq_mode_text[FREQ_MODE_COUNT] = {
+    "Manual",
+    "Auto",
 };
 
 const char* const phase_filter_text[PCSGPhaseFilterCount] = {
@@ -356,6 +364,13 @@ static void pocsag_pager_scene_receiver_config_set_tone_pitch(VariableItem* item
     app->txrx->rx_restart = true;
 }
 
+static void pocsag_pager_scene_receiver_config_set_freq_mode(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, freq_mode_text[index]);
+    app->filter.freq_auto = index == 1;
+}
+
 static void pocsag_pager_scene_receiver_config_set_tone_spread(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -399,6 +414,9 @@ static void
         app->filter.frame_filter == PCSGCapcodeFilterRange) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, PCSGCustomEventSceneSettingFrameMax);
+    } else if(index == PCSGSettingIndexFreqCorr) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, PCSGCustomEventSceneSettingFreqPpm);
     }
 }
 
@@ -598,6 +616,21 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     frame_max_item = variable_item_list_add(app->variable_item_list, "Frame Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_frame_max(app);
 
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Freq Mode:",
+        FREQ_MODE_COUNT,
+        pocsag_pager_scene_receiver_config_set_freq_mode,
+        app);
+    value_index = app->filter.freq_auto ? 1 : 0;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, freq_mode_text[value_index]);
+
+    item = variable_item_list_add(app->variable_item_list, "Freq Corr ppm:", 1, NULL, app);
+    char ppm_buf[8];
+    snprintf(ppm_buf, sizeof(ppm_buf), "%+ld", (long)app->filter.freq_correction_ppm);
+    variable_item_set_current_value_text(item, ppm_buf);
+
     // Locking the keyboard only makes sense while receiving.
     uint8_t selected = app->config_selected_index;
     if(app->config_standalone) {
@@ -627,10 +660,13 @@ bool pocsag_pager_scene_receiver_config_on_event(void* context, SceneManagerEven
             event.event == PCSGCustomEventSceneSettingFrameMin ||
             event.event == PCSGCustomEventSceneSettingFrameMax ||
             event.event == PCSGCustomEventSceneSettingRicMin ||
-            event.event == PCSGCustomEventSceneSettingRicMax) {
+            event.event == PCSGCustomEventSceneSettingRicMax ||
+            event.event == PCSGCustomEventSceneSettingFreqPpm) {
             PCSGNumberField field = PCSGNumberFieldCapcodeMin;
             if(event.event == PCSGCustomEventSceneSettingCapcodeMax) {
                 field = PCSGNumberFieldCapcodeMax;
+            } else if(event.event == PCSGCustomEventSceneSettingFreqPpm) {
+                field = PCSGNumberFieldFreqPpm;
             } else if(event.event == PCSGCustomEventSceneSettingRicMin) {
                 field = PCSGNumberFieldRicMin;
             } else if(event.event == PCSGCustomEventSceneSettingRicMax) {

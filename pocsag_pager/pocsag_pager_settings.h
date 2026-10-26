@@ -37,6 +37,7 @@ typedef enum {
     PCSGNumberFieldFrameMax,
     PCSGNumberFieldRicMin,
     PCSGNumberFieldRicMax,
+    PCSGNumberFieldFreqPpm,
 } PCSGNumberField;
 
 /** FLEX phase to show: all, or one of A-D. */
@@ -114,7 +115,18 @@ typedef struct {
     PCSGToneVolume tone_volume;
     PCSGTonePitch tone_pitch;
     PCSGToneSpread tone_spread;
+    // Crystal offset compensation applied to both RX and TX tuning, in ppm.
+    // One value works on every band; +ppm corrects a carrier that runs low.
+    int32_t freq_correction_ppm;
+    // Auto-calibrate the ppm from the demodulator while receiving (RX only).
+    bool freq_auto;
 } PCSGFilterSettings;
+
+/** Largest crystal correction offered, in ppm. */
+#define PCSG_FREQ_PPM_MAX 100
+
+/** Apply a ppm correction to a nominal frequency: nominal * (1 + ppm/1e6). */
+uint32_t pcsg_correct_frequency(int32_t ppm, uint32_t nominal);
 
 typedef struct POCSAGPagerApp POCSAGPagerApp;
 

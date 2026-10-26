@@ -15,6 +15,8 @@ static uint32_t* pocsag_pager_scene_capcode_input_field(POCSAGPagerApp* app) {
         return &app->filter.ric_min;
     case PCSGNumberFieldRicMax:
         return &app->filter.ric_max;
+    case PCSGNumberFieldFreqPpm:
+        return (uint32_t*)&app->filter.freq_correction_ppm;
     default:
         return &app->filter.capcode_min;
     }
@@ -39,8 +41,15 @@ void pocsag_pager_scene_capcode_input_on_enter(void* context) {
     const bool range = mode == PCSGCapcodeFilterRange;
 
     const char* header;
-    uint32_t max = PCSG_CAPCODE_MAX;
+    int32_t min = 0;
+    int32_t max = PCSG_CAPCODE_MAX;
     switch(field) {
+    case PCSGNumberFieldFreqPpm:
+        // Signed: + raises a low carrier, - lowers a high one.
+        header = "Freq Corr ppm";
+        min = -PCSG_FREQ_PPM_MAX;
+        max = PCSG_FREQ_PPM_MAX;
+        break;
     case PCSGNumberFieldCapcodeMax:
         header = "Capcode max";
         break;
@@ -70,8 +79,8 @@ void pocsag_pager_scene_capcode_input_on_enter(void* context) {
         app->number_input,
         pocsag_pager_scene_capcode_input_callback,
         app,
-        *pocsag_pager_scene_capcode_input_field(app),
-        0,
+        (int32_t)*pocsag_pager_scene_capcode_input_field(app),
+        min,
         max);
     view_dispatcher_switch_to_view(app->view_dispatcher, POCSAGPagerViewNumberInput);
 }

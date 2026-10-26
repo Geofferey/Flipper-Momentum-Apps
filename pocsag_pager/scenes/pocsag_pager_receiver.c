@@ -285,6 +285,7 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             // FLEX4 needs uninterrupted access to both hard-decision GPIOs.
             const float rssi = subghz_devices_get_rssi(app->txrx->radio_device);
             pcsg_receiver_rssi(app->pcsg_receiver, rssi);
+            pcsg_freq_auto_tick(app, rssi);
         }
 
         if(app->txrx->txrx_state == PCSGTxRxStateRx) {

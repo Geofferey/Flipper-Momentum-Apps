@@ -11,6 +11,7 @@ typedef enum {
     PCSGCustomEventSceneSettingFrameMax,
     PCSGCustomEventSceneSettingRicMin,
     PCSGCustomEventSceneSettingRicMax,
+    PCSGCustomEventSceneSettingFreqPpm,
     PCSGCustomEventSceneCapcodeInputDone,
     PCSGCustomEventTxRicInputDone,
     PCSGCustomEventTxMessageInputDone,
