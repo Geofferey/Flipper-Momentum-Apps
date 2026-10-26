@@ -26,25 +26,40 @@ static void pocsag_pager_app_tick_event_callback(void* context) {
 
 #define PCSG_FREQUENCY_FILE EXT_PATH("pocsag/settings.txt")
 
-// US FLEX paging channels: nationwide ones from the RadioReference paging wiki
-// (https://wiki.radioreference.com/index.php/Paging), plus 929.4625 MHz, a
-// local test paging channel. They are above the CC1101's 928 MHz rating;
-// Sub-GHz settings skips them unless the extended frequency range is enabled.
-static const uint32_t pcsg_flex_frequencies[] = {
+// Paging channels added to the standard Sub-GHz list.
+// POCSAG: DAPNET 439.9875 MHz (the app's default, missing from the standard
+// list) and the German 448.425, 465.970 and 466.075 MHz networks
+// (https://en.wikipedia.org/wiki/POCSAG).
+// US FLEX: nationwide channels from the RadioReference paging wiki
+// (https://wiki.radioreference.com/index.php/Paging), more from the Signal
+// Identification Wiki (https://sigidwiki.com/wiki/FLEX, listed to the kHz and
+// mapped to the 12.5 kHz channel offsets), plus 929.4625 MHz, a local test
+// paging channel. These are above the CC1101's 928 MHz rating; Sub-GHz
+// settings skips them unless the extended frequency range is enabled.
+static const uint32_t pcsg_paging_frequencies[] = {
+    439987500,
+    448425000,
+    465970000,
+    466075000,
+    929362500,
+    929387500,
     929462500,
+    929537500,
     929587500,
     929612500,
     929662500,
     929937500,
     931062500,
     931212500,
+    931337500,
+    931862500,
     931937500,
 };
 
 /*
  * Create the frequency list on first run: the standard Sub-GHz frequencies
- * plus common FLEX paging channels. An existing file is left alone, so a
- * user's own list is never overwritten.
+ * plus common POCSAG and FLEX paging channels. An existing file is left
+ * alone, so a user's own list is never overwritten.
  */
 static void pocsag_pager_app_create_frequency_file(void) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
@@ -55,13 +70,13 @@ static void pocsag_pager_app_create_frequency_file(void) {
                   flipper_format_write_header_cstr(
                       file, SUBGHZ_SETTING_FILE_TYPE, SUBGHZ_SETTING_FILE_VERSION) &&
                   flipper_format_write_comment_cstr(
-                      file, "Created by Flipper Pager: standard frequencies plus US FLEX") &&
+                      file, "Created by Flipper Pager: standard frequencies plus POCSAG and") &&
                   flipper_format_write_comment_cstr(
-                      file, "paging channels. Above 928 MHz needs the extended range enabled.");
+                      file, "FLEX paging channels. Above 928 MHz needs the extended range enabled.");
         bool add_standard = true;
         ok = ok && flipper_format_write_bool(file, "Add_standard_frequencies", &add_standard, 1);
-        for(size_t i = 0; ok && i < COUNT_OF(pcsg_flex_frequencies); i++) {
-            ok = flipper_format_write_uint32(file, "Frequency", &pcsg_flex_frequencies[i], 1);
+        for(size_t i = 0; ok && i < COUNT_OF(pcsg_paging_frequencies); i++) {
+            ok = flipper_format_write_uint32(file, "Frequency", &pcsg_paging_frequencies[i], 1);
         }
         if(!ok) FURI_LOG_E("POCSAGPager", "Unable to create %s", PCSG_FREQUENCY_FILE);
         flipper_format_free(file);

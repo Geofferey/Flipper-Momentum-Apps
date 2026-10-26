@@ -98,12 +98,17 @@ Logs can contain other people's personal information; see the
 ## Frequencies
 
 On first start the app creates `/ext/pocsag/settings.txt` (a standard Flipper
-Sub-GHz setting file) with the standard Sub-GHz frequencies plus these US FLEX
-paging channels:
+Sub-GHz setting file) with the standard Sub-GHz frequencies plus these paging
+channels:
 
-929.4625 (test channel), 929.5875, 929.6125, 929.6625, 929.9375, 931.0625,
-931.2125 and 931.9375 MHz, from the
-[RadioReference paging wiki](https://wiki.radioreference.com/index.php/Paging).
+POCSAG: 439.9875 (DAPNET), 448.425, 465.970 and 466.075 MHz (German networks),
+from [Wikipedia](https://en.wikipedia.org/wiki/POCSAG) and
+[DAPNET](https://en.wikipedia.org/wiki/DAPNET).
+
+US FLEX: 929.3625, 929.3875, 929.4625 (test channel), 929.5375, 929.5875, 929.6125,
+929.6625, 929.9375, 931.0625, 931.2125, 931.3375, 931.8625 and 931.9375 MHz,
+from the [RadioReference paging wiki](https://wiki.radioreference.com/index.php/Paging)
+and the [Signal Identification Wiki](https://sigidwiki.com/wiki/FLEX).
 
 They are above the CC1101's 928 MHz rating and only appear if the extended
 frequency range is enabled (see the [Disclaimer](#disclaimer)). An existing `settings.txt` is never overwritten;
