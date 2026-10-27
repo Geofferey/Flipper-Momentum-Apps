@@ -27,6 +27,7 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFreqMode,
     PCSGSettingIndexFreqCorr,
     PCSGSettingIndexRawCapture,
+    PCSGSettingIndexWeakDecode,
     PCSGSettingIndexLock,
 };
 
@@ -385,6 +386,13 @@ static void pocsag_pager_scene_receiver_config_set_raw_capture(VariableItem* ite
     app->filter.raw_capture = index == 1;
 }
 
+static void pocsag_pager_scene_receiver_config_set_weak_decode(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, raw_capture_text[index]);
+    app->filter.weak_decode = index == 1;
+}
+
 static void pocsag_pager_scene_receiver_config_set_freq_mode(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -687,6 +695,18 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         pocsag_pager_scene_receiver_config_set_raw_capture,
         app);
     value_index = app->filter.raw_capture ? 1 : 0;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, raw_capture_text[value_index]);
+
+    // Soft-decision (Chase) recovery of weak FLEX4 words. Off by default: it
+    // allocates its reliability buffer in the decoder only while enabled.
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Weak Decode:",
+        RAW_CAPTURE_COUNT,
+        pocsag_pager_scene_receiver_config_set_weak_decode,
+        app);
+    value_index = app->filter.weak_decode ? 1 : 0;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, raw_capture_text[value_index]);
 

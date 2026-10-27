@@ -192,7 +192,19 @@ struct SubGhzProtocolDecoderFlex {
     float synth_tones[4];
     float synth_volume;
     uint8_t synth_level;
+
+    // Weak Decode (Chase): per-bit reliability from the DPLL vote margins,
+    // allocated only while enabled (4 phases x 88 words x 32 bits).
+    bool weak_decode;
+    uint8_t* phase_rel;
+    uint8_t cur_rel_a;
+    uint8_t cur_rel_b;
+    bool page_chase;
 };
+
+#define FLEX_REL_WORD   32U
+#define FLEX_REL_SIZE   (4U * FLEX_PHASE_WORDS * FLEX_REL_WORD)
+#define FLEX_REL_HIGH   0xFFU
 
 typedef struct SubGhzProtocolDecoderFlex SubGhzProtocolDecoderFlex;
 
@@ -258,6 +270,7 @@ void subghz_protocol_decoder_flex_free(void* context) {
     furi_string_free(instance->generic.result_ric);
     furi_string_free(instance->generic.result_msg);
     free(instance->partial);
+    free(instance->phase_rel);
     for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
         if(instance->fragments[i].text) furi_string_free(instance->fragments[i].text);
     }
@@ -354,7 +367,7 @@ static void flex_set_page_header(
     instance->phase = phase;
     furi_string_printf(
         instance->generic.result_ric,
-        "[F%u/%c S%u%c %02u.%03u%s%s]\n\e#CAP: %09" PRIu32 "\e#\n",
+        "[F%u/%c S%u%c %02u.%03u%s%s%s]\n\e#CAP: %09" PRIu32 "\e#\n",
         flex_bit_rate(instance),
         phase,
         fragment,
@@ -362,6 +375,7 @@ static void flex_set_page_header(
         instance->cycle,
         instance->frame,
         instance->page_repaired ? " R" : "",
+        instance->page_chase ? " C" : "",
         instance->page_suspect ? " ?" : "",
         capcode);
 }
@@ -671,6 +685,7 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
     // one or more fragments.
     instance->page_partial = instance->page_suspect || strstr(message, FLEX_GAP_MARK) != NULL;
     instance->stats.pages_decoded++;
+    if(instance->page_chase) instance->stats.pages_chase++;
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
 }
 
@@ -686,6 +701,7 @@ static void flex_fragment_flush(
 
     instance->page_repaired = false;
     instance->page_suspect = false;
+    instance->page_chase = false;
     // Show and filter a joined message by where its first part arrived.
     const uint8_t frame = instance->frame;
     instance->frame = slot->frame;
@@ -938,13 +954,28 @@ static void flex_decode_phase(
     uint32_t words[FLEX_PHASE_WORDS],
     char phase) {
     bool valid[FLEX_PHASE_WORDS];
+    bool chased[FLEX_PHASE_WORDS];
+    const uint8_t phase_index = (uint8_t)((phase - 'A') & 0x03);
     for(uint8_t i = 0; i < FLEX_PHASE_WORDS; i++) {
+        chased[i] = false;
         valid[i] = flex_bch_correct(&words[i]) >= 0;
+        // Weak Decode: when hard BCH fails, soft-correct using the DPLL vote
+        // margins carried for this word. Checksum-gated downstream, so a wrong
+        // recovery is dropped at the page level.
+        if(!valid[i] && instance->weak_decode && instance->phase_rel) {
+            const uint8_t* rel =
+                &instance->phase_rel[((phase_index * FLEX_PHASE_WORDS) + i) * FLEX_REL_WORD];
+            if(flex_bch_chase(&words[i], rel)) {
+                valid[i] = true;
+                chased[i] = true;
+                instance->stats.words_chase++;
+            }
+        }
         if(valid[i]) words[i] &= 0x001FFFFFUL;
         instance->stats.words_total++;
         if(!valid[i]) {
             instance->stats.words_bad++;
-            instance->stats.words_bad_phase[(phase - 'A') & 0x03]++;
+            instance->stats.words_bad_phase[phase_index]++;
         }
     }
 
@@ -1015,6 +1046,15 @@ static void flex_decode_phase(
 
         instance->page_repaired = false;
         instance->page_suspect = false;
+        // Weak Decode marker: note whether any header word this page is built
+        // from was recovered by Chase. Message words are OR'd in below.
+        instance->page_chase = chased[vector_index] || chased[address_index];
+        if(long_address) {
+            instance->page_chase = instance->page_chase || chased[address_index - 1U];
+            if(long_data_index < FLEX_PHASE_WORDS) {
+                instance->page_chase = instance->page_chase || chased[long_data_index];
+            }
+        }
         if(type == FlexPageTypeTone) {
             // Tone pages live in the vector word, plus the second vector slot
             // for long addresses.
@@ -1043,6 +1083,11 @@ static void flex_decode_phase(
         if(length == 0 || (field_words && last >= FLEX_PHASE_WORDS)) {
             instance->stats.pages_bad_range++;
             continue;
+        }
+
+        // OR the message's source words into the Weak Decode marker.
+        for(uint16_t i = first; i <= last && i < FLEX_PHASE_WORDS; i++) {
+            if(chased[i]) instance->page_chase = true;
         }
 
         const uint32_t* page_words = words;
@@ -1143,6 +1188,19 @@ static void flex_decode_data(SubGhzProtocolDecoderFlex* instance) {
     flex_fragment_flush_expired(instance);
 }
 
+// Shift a reliability into the word's array to mirror the word's >>1 bit
+// accumulation, so entry [p] tracks the bit that lands at position p.
+static void flex_rel_push(
+    SubGhzProtocolDecoderFlex* instance,
+    uint8_t phase,
+    uint16_t index,
+    uint8_t rel) {
+    if(!instance->phase_rel) return;
+    uint8_t* w = &instance->phase_rel[((phase * FLEX_PHASE_WORDS) + index) * FLEX_REL_WORD];
+    memmove(w, w + 1, FLEX_REL_WORD - 1U);
+    w[FLEX_REL_WORD - 1U] = rel;
+}
+
 static void flex_read_data_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t symbol) {
     const uint16_t index =
         ((instance->data_bit_count >> 5) & 0xFFF8U) | (instance->data_bit_count & 0x0007U);
@@ -1153,18 +1211,22 @@ static void flex_read_data_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t s
     if(instance->baud == 1600U || !instance->phase_toggle) {
         instance->phase_a[index] =
             (instance->phase_a[index] >> 1) | (bit_a ? 0x80000000UL : 0);
+        flex_rel_push(instance, 0, index, instance->cur_rel_a);
         if(instance->levels == 4U) {
             instance->phase_b[index] =
                 (instance->phase_b[index] >> 1) | (bit_b ? 0x80000000UL : 0);
+            flex_rel_push(instance, 1, index, instance->cur_rel_b);
         }
         instance->phase_toggle = instance->baud == 3200U;
         if(instance->baud == 1600U) instance->data_bit_count++;
     } else {
         instance->phase_c[index] =
             (instance->phase_c[index] >> 1) | (bit_a ? 0x80000000UL : 0);
+        flex_rel_push(instance, 2, index, instance->cur_rel_a);
         if(instance->levels == 4U) {
             instance->phase_d[index] =
                 (instance->phase_d[index] >> 1) | (bit_b ? 0x80000000UL : 0);
+            flex_rel_push(instance, 3, index, instance->cur_rel_b);
         }
         instance->phase_toggle = false;
         instance->data_bit_count++;
@@ -1241,6 +1303,7 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t sym
             memset(instance->phase_b, 0, sizeof(instance->phase_b));
             memset(instance->phase_c, 0, sizeof(instance->phase_c));
             memset(instance->phase_d, 0, sizeof(instance->phase_d));
+            if(instance->phase_rel) memset(instance->phase_rel, FLEX_REL_HIGH, FLEX_REL_SIZE);
             instance->state = FlexDecoderStateData;
         }
         break;
@@ -1372,6 +1435,16 @@ void subghz_protocol_decoder_flex_feed_4fsk_sample(void* context, uint8_t hard_s
         for(uint8_t i = 0; i < COUNT_OF(instance->clock_votes); i++) {
             if(instance->clock_votes[i] > instance->clock_votes[voted_level]) voted_level = i;
         }
+        if(instance->weak_decode) {
+            // Per-bit reliability for Weak Decode: the vote margin of each bit
+            // the symbol carries (a = levels 2,3; b = levels 1,2).
+            const int16_t va = (int16_t)(instance->clock_votes[2] + instance->clock_votes[3]) -
+                               (int16_t)(instance->clock_votes[0] + instance->clock_votes[1]);
+            const int16_t vb = (int16_t)(instance->clock_votes[1] + instance->clock_votes[2]) -
+                               (int16_t)(instance->clock_votes[0] + instance->clock_votes[3]);
+            instance->cur_rel_a = (uint8_t)MIN((va < 0 ? -va : va), (int16_t)FLEX_REL_HIGH);
+            instance->cur_rel_b = (uint8_t)MIN((vb < 0 ? -vb : vb), (int16_t)FLEX_REL_HIGH);
+        }
         memset(instance->clock_votes, 0, sizeof(instance->clock_votes));
         instance->clock_decided = true;
         flex_process_symbol(instance, voted_level);
@@ -1393,6 +1466,7 @@ void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* inf
     info->repaired = instance->page_repaired;
     info->encrypted = instance->page_encrypted;
     info->partial = instance->page_partial;
+    info->chase = instance->page_chase;
     info->phase = instance->page_phase;
     info->frame = instance->page_frame;
     switch(instance->page_type) {
@@ -1438,6 +1512,20 @@ void subghz_protocol_decoder_flex_set_synth(
     instance->synth_volume = volume;
     instance->synth_level = 0xFFU;
     instance->synth_enable = enable;
+}
+
+void subghz_protocol_decoder_flex_set_weak_decode(void* context, bool enable) {
+    furi_assert(context);
+    SubGhzProtocolDecoderFlex* instance = context;
+    instance->weak_decode = enable;
+    if(enable && !instance->phase_rel) {
+        // Allocated only while Weak Decode is on, so it costs nothing when off.
+        instance->phase_rel = malloc(FLEX_REL_SIZE);
+        memset(instance->phase_rel, FLEX_REL_HIGH, FLEX_REL_SIZE);
+    } else if(!enable && instance->phase_rel) {
+        free(instance->phase_rel);
+        instance->phase_rel = NULL;
+    }
 }
 
 uint8_t subghz_protocol_decoder_flex_get_hash_data(void* context) {

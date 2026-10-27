@@ -37,6 +37,10 @@ typedef struct {
     uint32_t pages_long_address;
     /** Pages held for repair because some message words failed BCH. */
     uint32_t pages_incomplete;
+    /** Words recovered by the opt-in soft-decision Weak Decode (Chase). */
+    uint32_t words_chase;
+    /** Pages emitted that used at least one Chase-recovered word. */
+    uint32_t pages_chase;
 } FlexDecoderStats;
 
 typedef enum {
@@ -57,6 +61,8 @@ typedef struct {
     bool encrypted;
     /** Not fully decoded: failed header checksum, or a missing fragment. */
     bool partial;
+    /** A word in this page was recovered by the Weak Decode (Chase) decoder. */
+    bool chase;
     /** Phase (A-D) and frame (0-127) of the page, or of a joined message's first part. */
     char phase;
     uint8_t frame;
@@ -83,5 +89,12 @@ void subghz_protocol_decoder_flex_set_synth(
     const float tones[4],
     float volume,
     bool enable);
+
+/**
+ * Opt-in Weak Decode: carry per-symbol DPLL vote margins as bit reliabilities
+ * and soft-correct (Chase) words that fail BCH. Allocates its reliability
+ * buffer only while enabled, so there is no RAM or CPU cost when off.
+ */
+void subghz_protocol_decoder_flex_set_weak_decode(void* context, bool enable);
 
 extern const SubGhzProtocol subghz_protocol_flex;

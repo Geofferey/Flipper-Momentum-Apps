@@ -102,6 +102,67 @@ static void flex_bch_init(void) {
     flex_bch_initialized = true;
 }
 
+bool flex_bch_chase(uint32_t* word, const uint8_t rel[31]) {
+    flex_bch_init();
+    const uint32_t received = *word & 0x7FFFFFFFU;
+
+    // The FLEX_BCH_CHASE_BITS least-reliable data-word bit positions (0..30).
+    uint8_t pos[FLEX_BCH_CHASE_BITS];
+    for(uint8_t i = 0; i < FLEX_BCH_CHASE_BITS; i++) {
+        uint8_t best = 0xFFU;
+        uint8_t chosen = 0;
+        for(uint8_t b = 0; b < 31U; b++) {
+            bool taken = false;
+            for(uint8_t k = 0; k < i; k++) {
+                if(pos[k] == b) taken = true;
+            }
+            if(!taken && rel[b] < best) {
+                best = rel[b];
+                chosen = b;
+            }
+        }
+        pos[i] = chosen;
+    }
+
+    // Try every flip pattern of those bits, BCH-correct, and keep the unique
+    // codeword of least soft cost (reliability of all the bits it changes).
+    uint32_t best_word = 0;
+    uint32_t best_cost = UINT32_MAX;
+    bool unique = false;
+    for(uint32_t pattern = 1; pattern < (1UL << FLEX_BCH_CHASE_BITS); pattern++) {
+        uint32_t test = received;
+        uint32_t cost = 0;
+        for(uint8_t i = 0; i < FLEX_BCH_CHASE_BITS; i++) {
+            if(pattern & (1UL << i)) {
+                test ^= 1UL << pos[i];
+                cost += rel[pos[i]];
+            }
+        }
+        uint32_t candidate = test;
+        if(flex_bch_correct(&candidate) < 0) continue;
+        candidate &= 0x7FFFFFFFU;
+        uint32_t diff = candidate ^ test;
+        while(diff) {
+            const uint8_t b = flex_bch_ctz(diff);
+            if(b < 31U) cost += rel[b];
+            diff &= diff - 1U;
+        }
+        if(cost < best_cost) {
+            best_cost = cost;
+            best_word = candidate;
+            unique = true;
+        } else if(cost == best_cost && candidate != best_word) {
+            unique = false;
+        }
+    }
+
+    if(unique && best_cost != UINT32_MAX) {
+        *word = best_word;
+        return true;
+    }
+    return false;
+}
+
 int flex_bch_correct(uint32_t* codeword) {
     flex_bch_init();
 

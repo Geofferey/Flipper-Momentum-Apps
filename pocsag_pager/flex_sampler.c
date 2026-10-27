@@ -411,6 +411,11 @@ void flex_sampler_set_capture(FlexSampler* instance, bool enable) {
     instance->capture_enable = enable;
 }
 
+void flex_sampler_set_weak_decode(FlexSampler* instance, bool enable) {
+    furi_assert(instance);
+    subghz_protocol_decoder_flex_set_weak_decode(instance->decoder, enable);
+}
+
 bool flex_sampler_is_running(const FlexSampler* instance) {
     furi_assert(instance);
     return instance->running;

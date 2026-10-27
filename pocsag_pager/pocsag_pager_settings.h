@@ -126,6 +126,9 @@ typedef struct {
     bool freq_auto;
     // Record the raw FLEX4 sample stream to SD (debug / offline analysis).
     bool raw_capture;
+    // FLEX4 soft-decision (Chase) recovery of weak words; off by default, and
+    // allocates nothing in the decoder unless enabled.
+    bool weak_decode;
 } PCSGFilterSettings;
 
 /** Largest crystal correction offered, in ppm. */
