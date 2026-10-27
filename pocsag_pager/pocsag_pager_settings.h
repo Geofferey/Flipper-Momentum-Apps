@@ -66,6 +66,8 @@ typedef enum {
     PCSGSoundRaw,
     // FLEX4 levels play as pitches at the tone volume; other presets use Raw.
     PCSGSoundTone,
+    // Like Tone but from the decoder's recovered symbols: clean, no noise.
+    PCSGSoundSynth,
     PCSGSoundCount,
 } PCSGSound;
 

@@ -20,6 +20,9 @@ typedef enum {
     FlexSamplerSoundRaw,
     // Each of the four levels plays its own pitch through the speaker's PWM.
     FlexSamplerSoundTone,
+    // Like Tone but driven by the decoder's recovered symbols (clean, no noise).
+    // The sampler thread owns the speaker; the decoder plays the tones.
+    FlexSamplerSoundSynth,
 } FlexSamplerSound;
 
 /**

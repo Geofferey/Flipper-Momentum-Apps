@@ -96,28 +96,34 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
     // the speaker's PWM, which has a volume; the async path cannot (its
     // worker thread does not own the speaker) and falls back to Raw.
     const bool flex4 = pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name));
-    if(app->filter.signal_sound != PCSGSoundOff && furi_hal_speaker_acquire(30)) {
-        app->txrx->speaker_on = true;
-        if(flex4 && app->filter.signal_sound == PCSGSoundTone) {
-            static const float volumes[PCSGToneVolumeCount] = {0.1f, 0.4f, 1.0f};
-            // Lowest pitch, and the step between levels as a share of it.
-            static const float bases[PCSGTonePitchCount] = {300.0f, 600.0f, 1200.0f};
-            static const float spreads[PCSGToneSpreadCount] = {0.25f, 0.5f, 1.0f};
-            const float base = bases[app->filter.tone_pitch];
-            const float step = base * spreads[app->filter.tone_spread];
-            const float tones[4] = {base, base + step, base + 2.0f * step, base + 3.0f * step};
+    if(app->filter.signal_sound != PCSGSoundOff) {
+        static const float volumes[PCSGToneVolumeCount] = {0.1f, 0.4f, 1.0f};
+        // Lowest pitch, and the step between levels as a share of it.
+        static const float bases[PCSGTonePitchCount] = {300.0f, 600.0f, 1200.0f};
+        static const float spreads[PCSGToneSpreadCount] = {0.25f, 0.5f, 1.0f};
+        const float base = bases[app->filter.tone_pitch];
+        const float step = base * spreads[app->filter.tone_spread];
+        const float tones[4] = {base, base + step, base + 2.0f * step, base + 3.0f * step};
+        const float volume = volumes[app->filter.tone_volume];
+
+        if(flex4 && app->filter.signal_sound == PCSGSoundSynth) {
+            // The sampler thread owns the speaker and the decoder plays tones,
+            // so nothing is acquired here.
             flex_sampler_set_sound(
-                app->txrx->flex_sampler,
-                FlexSamplerSoundTone,
-                NULL,
-                volumes[app->filter.tone_volume],
-                tones);
-        } else if(flex4) {
-            furi_hal_gpio_init(&gpio_speaker, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-            flex_sampler_set_sound(
-                app->txrx->flex_sampler, FlexSamplerSoundRaw, &gpio_speaker, 0.0f, NULL);
-        } else {
-            subghz_devices_set_async_mirror_pin(app->txrx->radio_device, &gpio_speaker);
+                app->txrx->flex_sampler, FlexSamplerSoundSynth, NULL, volume, tones);
+        } else if(furi_hal_speaker_acquire(30)) {
+            app->txrx->speaker_on = true;
+            if(flex4 && app->filter.signal_sound == PCSGSoundTone) {
+                flex_sampler_set_sound(
+                    app->txrx->flex_sampler, FlexSamplerSoundTone, NULL, volume, tones);
+            } else if(flex4) {
+                furi_hal_gpio_init(&gpio_speaker, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+                flex_sampler_set_sound(
+                    app->txrx->flex_sampler, FlexSamplerSoundRaw, &gpio_speaker, 0.0f, NULL);
+            } else {
+                // POCSAG / two-level FLEX: mirror the data line (Raw).
+                subghz_devices_set_async_mirror_pin(app->txrx->radio_device, &gpio_speaker);
+            }
         }
     }
 

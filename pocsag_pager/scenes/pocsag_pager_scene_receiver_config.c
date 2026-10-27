@@ -79,6 +79,7 @@ const char* const signal_sound_text[PCSGSoundCount] = {
     "Off",
     "Raw",
     "Tone",
+    "Synth",
 };
 
 const char* const tone_volume_text[PCSGToneVolumeCount] = {

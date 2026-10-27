@@ -72,4 +72,14 @@ void subghz_protocol_decoder_flex_get_stats(void* context, FlexDecoderStats* sta
 /** True while the decoder is locked onto a frame (not hunting for sync). */
 bool subghz_protocol_decoder_flex_is_locked(void* context);
 
+/**
+ * Synthetic sound: play one tone per recovered symbol while locked. Must be
+ * driven from the thread that owns the speaker (the FLEX4 sampler thread).
+ */
+void subghz_protocol_decoder_flex_set_synth(
+    void* context,
+    const float tones[4],
+    float volume,
+    bool enable);
+
 extern const SubGhzProtocol subghz_protocol_flex;

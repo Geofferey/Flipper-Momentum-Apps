@@ -13,6 +13,7 @@
 
 #include <inttypes.h>
 #include <string.h>
+#include <furi_hal_speaker.h>
 #include <lib/flipper_format/flipper_format_i.h>
 
 #define TAG "FLEX"
@@ -183,6 +184,13 @@ struct SubGhzProtocolDecoderFlex {
     uint8_t page_type;
     uint8_t fragment;
     char phase;
+
+    // Synthetic sound: one tone per recovered symbol while locked. The decoder
+    // runs on the sampler thread, which owns the speaker in this mode.
+    bool synth_enable;
+    float synth_tones[4];
+    float synth_volume;
+    uint8_t synth_level;
 };
 
 typedef struct SubGhzProtocolDecoderFlex SubGhzProtocolDecoderFlex;
@@ -1160,6 +1168,19 @@ static void flex_read_data_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t s
 }
 
 static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t symbol) {
+    if(instance->synth_enable) {
+        // One tone per recovered symbol while locked; silent while hunting.
+        if(instance->state != FlexDecoderStateSync1) {
+            if(symbol != instance->synth_level) {
+                instance->synth_level = symbol;
+                furi_hal_speaker_start(instance->synth_tones[symbol & 3U], instance->synth_volume);
+            }
+        } else if(instance->synth_level != 0xFFU) {
+            instance->synth_level = 0xFFU;
+            furi_hal_speaker_start(instance->synth_tones[0], 0.0f);
+        }
+    }
+
     if(instance->state == FlexDecoderStateSync1) {
         instance->sync_buffer = (instance->sync_buffer << 1) | (symbol < 2U ? 1U : 0U);
         uint16_t sync_code = flex_sync_check(instance->sync_buffer);
@@ -1399,6 +1420,19 @@ bool subghz_protocol_decoder_flex_is_locked(void* context) {
     const SubGhzProtocolDecoderFlex* instance = context;
     // True once sync is found and the frame is being read (not hunting noise).
     return instance->state != FlexDecoderStateSync1;
+}
+
+void subghz_protocol_decoder_flex_set_synth(
+    void* context,
+    const float tones[4],
+    float volume,
+    bool enable) {
+    furi_assert(context);
+    SubGhzProtocolDecoderFlex* instance = context;
+    if(tones) memcpy(instance->synth_tones, tones, sizeof(instance->synth_tones));
+    instance->synth_volume = volume;
+    instance->synth_level = 0xFFU;
+    instance->synth_enable = enable;
 }
 
 uint8_t subghz_protocol_decoder_flex_get_hash_data(void* context) {

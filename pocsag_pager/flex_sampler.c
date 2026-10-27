@@ -170,6 +170,15 @@ static int32_t flex_sampler_thread(void* context) {
     FlexCapture* capture = malloc(sizeof(FlexCapture));
     flex_capture_open(capture);
 #endif
+    // Synth mode: this thread owns the speaker so the decoder (fed here) can
+    // play a tone per recovered symbol. Disable synth if the speaker is busy.
+    bool synth_speaker = false;
+    if(instance->sound == FlexSamplerSoundSynth) {
+        synth_speaker = furi_hal_speaker_acquire(30);
+        if(!synth_speaker) {
+            subghz_protocol_decoder_flex_set_synth(instance->decoder, NULL, 0.0f, false);
+        }
+    }
     while(instance->running) {
         if(instance->overrun) {
             FURI_CRITICAL_ENTER();
@@ -251,6 +260,11 @@ static int32_t flex_sampler_thread(void* context) {
             last_log_tick = now;
         }
         if(!processed) furi_delay_tick(1);
+    }
+    if(synth_speaker) {
+        subghz_protocol_decoder_flex_set_synth(instance->decoder, NULL, 0.0f, false);
+        furi_hal_speaker_stop();
+        furi_hal_speaker_release();
     }
 #if FLEX_CAPTURE_SECONDS
     flex_capture_close(capture);
@@ -360,12 +374,16 @@ void flex_sampler_set_sound(
     float volume,
     const float tones[4]) {
     furi_assert(instance);
-    furi_assert(sound != FlexSamplerSoundTone || tones);
+    furi_assert((sound != FlexSamplerSoundTone && sound != FlexSamplerSoundSynth) || tones);
     instance->sound = FlexSamplerSoundOff;
     instance->sound_pin = pin;
     instance->sound_volume = volume;
     if(tones) memcpy(instance->sound_tones, tones, sizeof(instance->sound_tones));
     instance->sound_level = UINT8_MAX;
+    // Synth is played by the decoder, from the thread that owns the speaker.
+    // The thread acquires the speaker at start and releases it on exit.
+    subghz_protocol_decoder_flex_set_synth(
+        instance->decoder, tones, volume, sound == FlexSamplerSoundSynth);
     instance->sound = sound;
 }
 
