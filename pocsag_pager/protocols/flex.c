@@ -174,6 +174,7 @@ struct SubGhzProtocolDecoderFlex {
     bool page_valid[FLEX_PHASE_WORDS];
     bool page_repaired;
     bool page_suspect;
+    bool page_partial;
     bool page_duplicate;
     bool page_encrypted;
     // Where the page (or a joined message's first part) was received.
@@ -666,6 +667,9 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
         (instance->page_type == FlexPageTypeAlphanumeric && !strncmp(message, "ALN: ", 5) &&
          flex_text_looks_encrypted(message + 5));
     instance->page_duplicate = flex_seen_check(instance, hash);
+    // Not fully decoded: a failed header checksum, or a joined message missing
+    // one or more fragments.
+    instance->page_partial = instance->page_suspect || strstr(message, FLEX_GAP_MARK) != NULL;
     instance->stats.pages_decoded++;
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
 }
@@ -1388,6 +1392,7 @@ void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* inf
     info->duplicate = instance->page_duplicate;
     info->repaired = instance->page_repaired;
     info->encrypted = instance->page_encrypted;
+    info->partial = instance->page_partial;
     info->phase = instance->page_phase;
     info->frame = instance->page_frame;
     switch(instance->page_type) {

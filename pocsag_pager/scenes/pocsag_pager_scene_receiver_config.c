@@ -318,6 +318,13 @@ static void pocsag_pager_scene_receiver_config_set_flex_dups(VariableItem* item)
     app->filter.hide_duplicates = index == 0;
 }
 
+static void pocsag_pager_scene_receiver_config_set_flex_partial(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, flex_dups_text[index]);
+    app->filter.hide_partial = index == 0;
+}
+
 static void pocsag_pager_scene_receiver_config_set_flex_encrypted(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -513,6 +520,17 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         pocsag_pager_scene_receiver_config_set_flex_encrypted,
         app);
     value_index = app->filter.hide_encrypted ? 0 : 1;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, flex_dups_text[value_index]);
+
+    // Hide = discard messages that could not be fully decoded.
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Partial Msgs:",
+        FLEX_DUPS_COUNT,
+        pocsag_pager_scene_receiver_config_set_flex_partial,
+        app);
+    value_index = app->filter.hide_partial ? 0 : 1;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, flex_dups_text[value_index]);
 

@@ -55,6 +55,8 @@ typedef struct {
     bool repaired;
     /** A FLEX secure page, or text that looks like an encrypted payload. */
     bool encrypted;
+    /** Not fully decoded: failed header checksum, or a missing fragment. */
+    bool partial;
     /** Phase (A-D) and frame (0-127) of the page, or of a joined message's first part. */
     char phase;
     uint8_t frame;

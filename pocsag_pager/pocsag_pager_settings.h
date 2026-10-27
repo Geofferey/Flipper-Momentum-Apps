@@ -110,6 +110,8 @@ typedef struct {
     uint32_t ric_max;
     bool hide_duplicates;
     bool hide_encrypted;
+    // Discard FLEX messages that could not be fully decoded (off by default).
+    bool hide_partial;
     // Log to one temp file destroyed on exit instead of a kept log per session.
     bool log_temp;
     PCSGAlert alert;

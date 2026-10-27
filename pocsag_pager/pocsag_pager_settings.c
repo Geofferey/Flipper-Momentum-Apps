@@ -57,6 +57,7 @@ bool pcsg_filter_accepts(
     subghz_protocol_decoder_flex_get_page_info(decoder_base, &page);
     if(page.duplicate && filter->hide_duplicates) return false;
     if(page.encrypted && filter->hide_encrypted) return false;
+    if(page.partial && filter->hide_partial) return false;
 
     switch(page.kind) {
     case FlexPageKindAlpha:
@@ -146,6 +147,9 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         }
         if(flipper_format_read_uint32(file, "FlexEncrypted", &value, 1)) {
             filter->hide_encrypted = value == 0;
+        }
+        if(flipper_format_read_uint32(file, "FlexPartial", &value, 1)) {
+            filter->hide_partial = value == 0;
         }
         if(flipper_format_read_uint32(file, "LogTemp", &value, 1)) {
             filter->log_temp = value != 0;
@@ -267,6 +271,8 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "FlexDups", &value, 1)) break;
         value = !filter->hide_encrypted;
         if(!flipper_format_write_uint32(file, "FlexEncrypted", &value, 1)) break;
+        value = !filter->hide_partial;
+        if(!flipper_format_write_uint32(file, "FlexPartial", &value, 1)) break;
         value = filter->log_temp;
         if(!flipper_format_write_uint32(file, "LogTemp", &value, 1)) break;
         value = filter->phase_filter;
