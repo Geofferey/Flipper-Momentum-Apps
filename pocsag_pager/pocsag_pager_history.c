@@ -20,10 +20,10 @@
  * for the list, so the list can grow far beyond what full messages in RAM
  * would allow.
  */
-// The index is allocated in blocks as messages arrive and released on reset,
-// so an idle receiver costs nothing and no single allocation is large.
+// The index is a FIFO deque of fixed-size blocks: a block is allocated as the
+// newest fills and freed as the oldest empties, so RAM tracks the live window
+// and no single allocation is large. An idle receiver costs nothing.
 #define PCSG_HISTORY_BLOCK_ITEMS 50U
-#define PCSG_HISTORY_BLOCKS      ((PCSG_HISTORY_MAX + PCSG_HISTORY_BLOCK_ITEMS - 1U) / PCSG_HISTORY_BLOCK_ITEMS)
 
 typedef struct {
     uint32_t offset;
@@ -32,15 +32,25 @@ typedef struct {
     char label[PCSG_HISTORY_LABEL_SIZE];
 } PCSGHistoryItem;
 
+typedef struct PCSGHistoryBlock {
+    struct PCSGHistoryBlock* next;
+    PCSGHistoryItem items[PCSG_HISTORY_BLOCK_ITEMS];
+} PCSGHistoryBlock;
+
 struct PCSGHistory {
     uint32_t last_update_timestamp;
     uint8_t code_last_hash_data;
     bool has_last_hash;
 
     FuriMutex* mutex;
-    PCSGHistoryItem* blocks[PCSG_HISTORY_BLOCKS];
-    uint16_t head;
+    // Oldest entries live in head_block from head_offset; newest fill tail_block
+    // up to tail_fill. Both NULL when empty.
+    PCSGHistoryBlock* head_block;
+    PCSGHistoryBlock* tail_block;
+    uint16_t head_offset;
+    uint16_t tail_fill;
     uint16_t count;
+    uint16_t last_evicted;
     uint32_t total;
 
     Storage* storage;
@@ -58,19 +68,66 @@ struct PCSGHistory {
     FuriString* line;
 };
 
-// Slot for list index idx, allocating its block if this is its first use.
+// Live item at list index idx (0 = oldest), or NULL if out of range.
 static PCSGHistoryItem* pcsg_history_item(PCSGHistory* instance, uint16_t idx) {
-    const uint16_t position = (instance->head + idx) % PCSG_HISTORY_MAX;
-    PCSGHistoryItem** block = &instance->blocks[position / PCSG_HISTORY_BLOCK_ITEMS];
-    if(!*block) *block = calloc(PCSG_HISTORY_BLOCK_ITEMS, sizeof(PCSGHistoryItem));
-    return &(*block)[position % PCSG_HISTORY_BLOCK_ITEMS];
+    if(idx >= instance->count) return NULL;
+    uint16_t position = instance->head_offset + idx;
+    PCSGHistoryBlock* block = instance->head_block;
+    while(position >= PCSG_HISTORY_BLOCK_ITEMS && block) {
+        position -= PCSG_HISTORY_BLOCK_ITEMS;
+        block = block->next;
+    }
+    return block ? &block->items[position] : NULL;
 }
 
 static void pcsg_history_free_blocks(PCSGHistory* instance) {
-    for(size_t i = 0; i < PCSG_HISTORY_BLOCKS; i++) {
-        free(instance->blocks[i]);
-        instance->blocks[i] = NULL;
+    PCSGHistoryBlock* block = instance->head_block;
+    while(block) {
+        PCSGHistoryBlock* next = block->next;
+        free(block);
+        block = next;
     }
+    instance->head_block = NULL;
+    instance->tail_block = NULL;
+    instance->head_offset = 0;
+    instance->tail_fill = 0;
+}
+
+// Drop the oldest item, freeing the head block once it empties. The entry
+// stays in the SD log; only the viewable window shrinks.
+static void pcsg_history_evict_oldest(PCSGHistory* instance) {
+    if(instance->count == 0) return;
+    instance->head_offset++;
+    instance->count--;
+    if(instance->count == 0) {
+        pcsg_history_free_blocks(instance);
+    } else if(instance->head_offset >= PCSG_HISTORY_BLOCK_ITEMS) {
+        PCSGHistoryBlock* old = instance->head_block;
+        instance->head_block = old->next;
+        instance->head_offset = 0;
+        free(old);
+    }
+}
+
+// Append a slot for a new newest item, growing the deque by a block as needed.
+// Returns NULL if a new block is needed but cannot be allocated.
+static PCSGHistoryItem* pcsg_history_append_slot(PCSGHistory* instance) {
+    if(!instance->tail_block || instance->tail_fill >= PCSG_HISTORY_BLOCK_ITEMS) {
+        PCSGHistoryBlock* block = calloc(1, sizeof(PCSGHistoryBlock));
+        if(!block) return NULL;
+        if(instance->tail_block) {
+            instance->tail_block->next = block;
+        } else {
+            instance->head_block = block;
+            instance->head_offset = 0;
+        }
+        instance->tail_block = block;
+        instance->tail_fill = 0;
+    }
+    PCSGHistoryItem* item = &instance->tail_block->items[instance->tail_fill];
+    instance->tail_fill++;
+    instance->count++;
+    return item;
 }
 
 static void pcsg_history_close_log(PCSGHistory* instance) {
@@ -229,9 +286,9 @@ void pcsg_history_reset(PCSGHistory* instance) {
     furi_mutex_acquire(instance->mutex, FuriWaitForever);
     pcsg_history_close_log(instance);
     pcsg_history_free_blocks(instance);
-    instance->head = 0;
     instance->count = 0;
     instance->total = 0;
+    instance->last_evicted = 0;
     instance->code_last_hash_data = 0;
     instance->has_last_hash = false;
     furi_mutex_release(instance->mutex);
@@ -242,15 +299,15 @@ uint16_t pcsg_history_get_item(PCSGHistory* instance) {
     return instance->count;
 }
 
-bool pcsg_history_is_full(PCSGHistory* instance) {
+uint16_t pcsg_history_last_evicted(PCSGHistory* instance) {
     furi_assert(instance);
-    return instance->count >= PCSG_HISTORY_MAX;
+    return instance->last_evicted;
 }
 
 uint8_t pcsg_history_get_type_protocol(PCSGHistory* instance, uint16_t idx) {
     furi_assert(instance);
-    if(idx >= instance->count) return 0;
-    return pcsg_history_item(instance, idx)->type;
+    const PCSGHistoryItem* item = pcsg_history_item(instance, idx);
+    return item ? item->type : 0;
 }
 
 void pcsg_history_get_text_item_menu(PCSGHistory* instance, FuriString* output, uint16_t idx) {
@@ -359,11 +416,30 @@ PCSGHistoryStateAddKey
         // Keep the log intact if the app or the battery dies.
         storage_file_sync(instance->file);
 
-        if(instance->count >= PCSG_HISTORY_MAX) {
-            instance->head = (instance->head + 1U) % PCSG_HISTORY_MAX;
-            instance->count--;
+        // Roll the oldest entries off the viewable window while free heap is
+        // tight, keeping at least PCSG_HISTORY_MIN_ITEMS. They stay in the log.
+        instance->last_evicted = 0;
+        while(instance->count > PCSG_HISTORY_MIN_ITEMS &&
+              memmgr_get_free_heap() < PCSG_HISTORY_HEAP_RESERVE) {
+            pcsg_history_evict_oldest(instance);
+            instance->last_evicted++;
         }
-        PCSGHistoryItem* item = pcsg_history_item(instance, instance->count);
+
+        PCSGHistoryItem* item = pcsg_history_append_slot(instance);
+        while(!item && instance->count > 0) {
+            // Under severe pressure a new block will not allocate; free one by
+            // dropping the oldest, then retry.
+            pcsg_history_evict_oldest(instance);
+            instance->last_evicted++;
+            item = pcsg_history_append_slot(instance);
+        }
+        if(!item) {
+            // Nothing could be stored in RAM, but the entry is in the SD log.
+            instance->file_size += length + 1U;
+            instance->total++;
+            state = PCSGHistoryStateAddKeyOverflow;
+            break;
+        }
         item->offset = instance->file_size;
         item->length = length;
         item->type = decoder_base->protocol->type;
@@ -381,7 +457,6 @@ PCSGHistoryStateAddKey
         furi_string_free(message);
 
         instance->file_size += length + 1U;
-        instance->count++;
         instance->total++;
         state = PCSGHistoryStateAddKeyNewDada;
     } while(false);

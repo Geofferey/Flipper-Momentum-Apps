@@ -164,21 +164,24 @@ void pcsg_view_receiver_set_item_count(PCSGReceiver* pcsg_receiver, uint16_t cou
     pcsg_view_receiver_update_offset(pcsg_receiver);
 }
 
-void pcsg_view_receiver_add_item(PCSGReceiver* pcsg_receiver, bool dropped_oldest) {
+void pcsg_view_receiver_add_item(
+    PCSGReceiver* pcsg_receiver,
+    uint16_t new_count,
+    uint16_t evicted) {
     furi_assert(pcsg_receiver);
     with_view_model(
         pcsg_receiver->view,
         PCSGReceiverModel * model,
         {
             // Follow new messages while the newest row is selected; otherwise
-            // keep the same message selected as rows shift up.
+            // keep the same message selected as evicted rows shift off the top.
             const bool at_end = model->history_item != 0 &&
                                 model->idx == model->history_item - 1;
-            if(dropped_oldest) {
-                if(!at_end && model->idx > 0) model->idx--;
+            model->history_item = new_count;
+            if(at_end) {
+                model->idx = new_count ? (int16_t)(new_count - 1) : 0;
             } else {
-                model->history_item++;
-                if(at_end) model->idx++;
+                model->idx = CLAMP(model->idx - (int16_t)evicted, (int16_t)(new_count ? new_count - 1 : 0), 0);
             }
         },
         true);

@@ -7,8 +7,15 @@
 #include <lib/flipper_format/flipper_format.h>
 #include <lib/subghz/types.h>
 
-/** Entries kept in the on-screen list; every message is also logged to SD. */
-#define PCSG_HISTORY_MAX 300
+/*
+ * The on-screen list is a rolling window: every message is logged to SD, but
+ * RAM keeps only recent entries. The window grows with each message and rolls
+ * the oldest ones off when free heap drops below PCSG_HISTORY_HEAP_RESERVE, so
+ * it uses what memory is spare without a fixed cap. It never falls below
+ * PCSG_HISTORY_MIN_ITEMS, so some history is always viewable.
+ */
+#define PCSG_HISTORY_MIN_ITEMS    32U
+#define PCSG_HISTORY_HEAP_RESERVE 12288U
 
 /** Where receive sessions are logged, one file per session. */
 #define PCSG_HISTORY_LOG_DIR    EXT_PATH("pocsag/logs")
@@ -81,8 +88,8 @@ void pcsg_history_reset(PCSGHistory* instance);
  */
 uint16_t pcsg_history_get_item(PCSGHistory* instance);
 
-/** Whether the list is full, so the next message drops the oldest entry */
-bool pcsg_history_is_full(PCSGHistory* instance);
+/** Oldest entries rolled off the viewable window by the most recent add. */
+uint16_t pcsg_history_last_evicted(PCSGHistory* instance);
 
 /** Get type protocol to history[idx]
  *

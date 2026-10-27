@@ -50,10 +50,15 @@ void pcsg_view_receiver_set_review_mode(PCSGReceiver* pcsg_receiver, bool review
 void pcsg_view_receiver_set_item_count(PCSGReceiver* pcsg_receiver, uint16_t count);
 
 /**
- * Account for one new row at the end of the list. With dropped_oldest the
- * first row went away to make room, so the count stays the same.
+ * Account for one new row at the end of the list, given the new total count
+ * and how many oldest rows were evicted to make room. The selection follows
+ * the newest row when it was already there, otherwise it stays on the same
+ * message as the rows above it shift off.
  */
-void pcsg_view_receiver_add_item(PCSGReceiver* pcsg_receiver, bool dropped_oldest);
+void pcsg_view_receiver_add_item(
+    PCSGReceiver* pcsg_receiver,
+    uint16_t new_count,
+    uint16_t evicted);
 
 uint16_t pcsg_view_receiver_get_idx_menu(PCSGReceiver* pcsg_receiver);
 
