@@ -204,6 +204,9 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "FreqAuto", &value, 1)) {
             filter->freq_auto = value != 0;
         }
+        if(flipper_format_read_uint32(file, "RawCapture", &value, 1)) {
+            filter->raw_capture = value != 0;
+        }
         if(flipper_format_read_uint32(file, "TxFrequency", &value, 1) &&
            subghz_devices_is_frequency_valid(app->txrx->radio_device, value)) {
             app->tx_config.frequency = value;
@@ -298,6 +301,8 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_int32(file, "FreqCorrPpm", &filter->freq_correction_ppm, 1)) break;
         value = filter->freq_auto;
         if(!flipper_format_write_uint32(file, "FreqAuto", &value, 1)) break;
+        value = filter->raw_capture;
+        if(!flipper_format_write_uint32(file, "RawCapture", &value, 1)) break;
         value = app->tx_config.frequency;
         if(!flipper_format_write_uint32(file, "TxFrequency", &value, 1)) break;
         value = app->tx_config.ric;

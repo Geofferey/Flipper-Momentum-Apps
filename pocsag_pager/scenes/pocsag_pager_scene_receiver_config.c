@@ -26,6 +26,7 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFrameMax,
     PCSGSettingIndexFreqMode,
     PCSGSettingIndexFreqCorr,
+    PCSGSettingIndexRawCapture,
     PCSGSettingIndexLock,
 };
 
@@ -372,6 +373,18 @@ static void pocsag_pager_scene_receiver_config_set_tone_pitch(VariableItem* item
     app->txrx->rx_restart = true;
 }
 
+#define RAW_CAPTURE_COUNT 2
+const char* const raw_capture_text[RAW_CAPTURE_COUNT] = {
+    "Off",
+    "On",
+};
+static void pocsag_pager_scene_receiver_config_set_raw_capture(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, raw_capture_text[index]);
+    app->filter.raw_capture = index == 1;
+}
+
 static void pocsag_pager_scene_receiver_config_set_freq_mode(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -665,6 +678,17 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     char ppm_buf[8];
     snprintf(ppm_buf, sizeof(ppm_buf), "%+ld", (long)app->filter.freq_correction_ppm);
     variable_item_set_current_value_text(item, ppm_buf);
+
+    // Debug: record the raw FLEX4 sample stream to SD for offline analysis.
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Raw Capture:",
+        RAW_CAPTURE_COUNT,
+        pocsag_pager_scene_receiver_config_set_raw_capture,
+        app);
+    value_index = app->filter.raw_capture ? 1 : 0;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, raw_capture_text[value_index]);
 
     // Locking the keyboard only makes sense while receiving.
     uint8_t selected = app->config_selected_index;

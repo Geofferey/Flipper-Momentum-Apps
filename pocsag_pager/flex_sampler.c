@@ -7,6 +7,7 @@
 #include <furi_hal_interrupt.h>
 #include <furi_hal_resources.h>
 #include <furi_hal_speaker.h>
+#include <furi_hal_rtc.h>
 #include <stm32wbxx_ll_tim.h>
 
 #define TAG "FlexSampler"
@@ -17,23 +18,22 @@
 #define FLEX_SAMPLE_BUFFER_MASK (FLEX_SAMPLE_BUFFER_SIZE - 1U)
 #define FLEX_STATS_LOG_INTERVAL_MS 1000U
 
-// Debug aid: when non-zero, the first FLEX_CAPTURE_SECONDS of each receive
-// session are written to FLEX_CAPTURE_PATH as raw RX_HARD_DATA samples, four
-// 2-bit samples per byte with the earliest in the top bits, at
-// FLEX_4FSK_SAMPLE_RATE_HZ. Used to tune clock recovery against real signals.
-#ifndef FLEX_CAPTURE_SECONDS
-#define FLEX_CAPTURE_SECONDS 0U
-#endif
-
-#if FLEX_CAPTURE_SECONDS
 #include <storage/storage.h>
 
-#define FLEX_CAPTURE_PATH  EXT_PATH("apps_data/pocsag_pager/flex4_capture.bin")
-#define FLEX_CAPTURE_CHUNK 512U
+// Optional raw capture (Settings > Raw Capture) for offline analysis: the
+// RX_HARD_DATA stream, four 2-bit samples per byte with the earliest in the
+// top bits, at FLEX_4FSK_SAMPLE_RATE_HZ. One bounded window per session, to a
+// timestamped file; used to tune clock recovery against real signals.
+// On the SD card next to the logs. Captures run until the session ends or the
+// cap (~3.8 MB at 25.6 kHz) is reached.
+#define FLEX_CAPTURE_DIR      EXT_PATH("pocsag/captures")
+#define FLEX_CAPTURE_WINDOW_S 600U
+#define FLEX_CAPTURE_CHUNK    512U
 
 typedef struct {
     Storage* storage;
     File* file;
+    bool open;
     uint32_t remaining;
     uint8_t packed;
     uint8_t packed_count;
@@ -44,14 +44,32 @@ typedef struct {
 static void flex_capture_open(FlexCapture* capture) {
     memset(capture, 0, sizeof(FlexCapture));
     capture->storage = furi_record_open(RECORD_STORAGE);
-    storage_simply_mkdir(capture->storage, EXT_PATH("apps_data/pocsag_pager"));
+    storage_simply_mkdir(capture->storage, EXT_PATH("pocsag"));
+    storage_simply_mkdir(capture->storage, FLEX_CAPTURE_DIR);
+
+    DateTime dt;
+    furi_hal_rtc_get_datetime(&dt);
+    FuriString* path = furi_string_alloc_printf(
+        "%s/flex4_%04u%02u%02u_%02u%02u%02u.bin",
+        FLEX_CAPTURE_DIR,
+        dt.year,
+        dt.month,
+        dt.day,
+        dt.hour,
+        dt.minute,
+        dt.second);
+
     capture->file = storage_file_alloc(capture->storage);
-    if(storage_file_open(capture->file, FLEX_CAPTURE_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        capture->remaining = FLEX_CAPTURE_SECONDS * FLEX_4FSK_SAMPLE_RATE_HZ;
-        FURI_LOG_I("FlexSampler", "Capturing %us to %s", FLEX_CAPTURE_SECONDS, FLEX_CAPTURE_PATH);
+    if(storage_file_open(
+           capture->file, furi_string_get_cstr(path), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        capture->open = true;
+        capture->remaining = FLEX_CAPTURE_WINDOW_S * FLEX_4FSK_SAMPLE_RATE_HZ;
+        FURI_LOG_I(
+            "FlexSampler", "Capturing %us to %s", FLEX_CAPTURE_WINDOW_S, furi_string_get_cstr(path));
     } else {
-        FURI_LOG_E("FlexSampler", "Capture file open failed");
+        FURI_LOG_E("FlexSampler", "Capture open failed");
     }
+    furi_string_free(path);
 }
 
 static void flex_capture_flush(FlexCapture* capture) {
@@ -60,7 +78,7 @@ static void flex_capture_flush(FlexCapture* capture) {
 }
 
 static void flex_capture_push(FlexCapture* capture, uint8_t sample) {
-    if(!capture->remaining) return;
+    if(!capture->open || !capture->remaining) return;
     capture->packed = (capture->packed << 2) | (sample & 0x03U);
     if(++capture->packed_count == 4U) {
         capture->chunk[capture->length++] = capture->packed;
@@ -70,19 +88,19 @@ static void flex_capture_push(FlexCapture* capture, uint8_t sample) {
     if(--capture->remaining == 0) {
         flex_capture_flush(capture);
         storage_file_close(capture->file);
+        capture->open = false;
         FURI_LOG_I("FlexSampler", "Capture complete");
     }
 }
 
 static void flex_capture_close(FlexCapture* capture) {
-    if(capture->remaining) {
+    if(capture->open) {
         flex_capture_flush(capture);
         storage_file_close(capture->file);
     }
-    storage_file_free(capture->file);
+    if(capture->file) storage_file_free(capture->file);
     furi_record_close(RECORD_STORAGE);
 }
-#endif
 
 struct FlexSampler {
     FuriThread* thread;
@@ -113,6 +131,8 @@ struct FlexSampler {
     // tone only plays during a frame, not on the noise between pages. 0xFF in
     // sound_level marks the speaker as currently silenced.
     volatile bool sound_gate;
+    // Record the raw sample stream this session (see flex_sampler_set_capture).
+    bool capture_enable;
 };
 
 #define FLEX_SOUND_SILENCED 0xFFU
@@ -166,10 +186,11 @@ static void flex_sampler_timer_isr(void* context) {
 static int32_t flex_sampler_thread(void* context) {
     FlexSampler* instance = context;
     uint32_t last_log_tick = furi_get_tick();
-#if FLEX_CAPTURE_SECONDS
-    FlexCapture* capture = malloc(sizeof(FlexCapture));
-    flex_capture_open(capture);
-#endif
+    FlexCapture* capture = NULL;
+    if(instance->capture_enable) {
+        capture = malloc(sizeof(FlexCapture));
+        flex_capture_open(capture);
+    }
     // Synth mode: this thread owns the speaker so the decoder (fed here) can
     // play a tone per recovered symbol. Disable synth if the speaker is busy.
     bool synth_speaker = false;
@@ -197,9 +218,7 @@ static int32_t flex_sampler_thread(void* context) {
             }
             instance->last_symbol = sample;
             instance->last_symbol_valid = true;
-#if FLEX_CAPTURE_SECONDS
-            flex_capture_push(capture, sample);
-#endif
+            if(capture) flex_capture_push(capture, sample);
             subghz_protocol_decoder_flex_feed_4fsk_sample(instance->decoder, sample);
             processed = true;
         }
@@ -266,10 +285,10 @@ static int32_t flex_sampler_thread(void* context) {
         furi_hal_speaker_stop();
         furi_hal_speaker_release();
     }
-#if FLEX_CAPTURE_SECONDS
-    flex_capture_close(capture);
-    free(capture);
-#endif
+    if(capture) {
+        flex_capture_close(capture);
+        free(capture);
+    }
     return 0;
 }
 
@@ -385,6 +404,11 @@ void flex_sampler_set_sound(
     subghz_protocol_decoder_flex_set_synth(
         instance->decoder, tones, volume, sound == FlexSamplerSoundSynth);
     instance->sound = sound;
+}
+
+void flex_sampler_set_capture(FlexSampler* instance, bool enable) {
+    furi_assert(instance);
+    instance->capture_enable = enable;
 }
 
 bool flex_sampler_is_running(const FlexSampler* instance) {
