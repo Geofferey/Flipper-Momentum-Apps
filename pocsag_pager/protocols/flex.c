@@ -1527,15 +1527,19 @@ void subghz_protocol_decoder_flex_set_synth(
 void subghz_protocol_decoder_flex_set_weak_decode(void* context, bool enable) {
     furi_assert(context);
     SubGhzProtocolDecoderFlex* instance = context;
-    instance->weak_decode = enable;
     if(enable && !instance->phase_rel) {
         // Allocated only while Weak Decode is on, so it costs nothing when off.
         instance->phase_rel = malloc(FLEX_REL_SIZE);
-        memset(instance->phase_rel, FLEX_REL_HIGH, FLEX_REL_SIZE);
+        if(instance->phase_rel) {
+            memset(instance->phase_rel, FLEX_REL_HIGH, FLEX_REL_SIZE);
+        } else {
+            FURI_LOG_E(TAG, "Weak Decode allocation failed");
+        }
     } else if(!enable && instance->phase_rel) {
         free(instance->phase_rel);
         instance->phase_rel = NULL;
     }
+    instance->weak_decode = enable && instance->phase_rel;
 }
 
 uint8_t subghz_protocol_decoder_flex_get_hash_data(void* context) {

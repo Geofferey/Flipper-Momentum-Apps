@@ -189,7 +189,11 @@ static int32_t flex_sampler_thread(void* context) {
     FlexCapture* capture = NULL;
     if(instance->capture_enable) {
         capture = malloc(sizeof(FlexCapture));
-        flex_capture_open(capture);
+        if(capture) {
+            flex_capture_open(capture);
+        } else {
+            FURI_LOG_E(TAG, "Raw Capture allocation failed");
+        }
     }
     // Synth mode: this thread owns the speaker so the decoder (fed here) can
     // play a tone per recovered symbol. Disable synth if the speaker is busy.

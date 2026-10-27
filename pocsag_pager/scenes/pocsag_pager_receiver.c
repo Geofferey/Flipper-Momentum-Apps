@@ -152,16 +152,20 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
     UNUSED(receiver);
     if(!pcsg_filter_accepts(&app->filter, decoder_base)) return;
 
-    if(pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset) ==
-       PCSGHistoryStateAddKeyNewDada) {
-        const uint16_t evicted = pcsg_history_last_evicted(app->txrx->history);
-        pcsg_view_receiver_add_item(
+    const PCSGHistoryStateAddKey state =
+        pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset);
+    const uint16_t evicted = pcsg_history_last_evicted(app->txrx->history);
+    if(state == PCSGHistoryStateAddKeyNewDada || state == PCSGHistoryStateAddKeyOverflow ||
+       evicted) {
+        pcsg_view_receiver_history_changed(
             app->pcsg_receiver, pcsg_history_get_item(app->txrx->history), evicted);
         app->txrx->idx_menu_chosen = app->txrx->idx_menu_chosen > evicted ?
                                          app->txrx->idx_menu_chosen - evicted :
                                          0;
 
         pocsag_pager_scene_receiver_update_statusbar(app);
+    }
+    if(state == PCSGHistoryStateAddKeyNewDada) {
         notification_message(app->notifications, &sequence_blink_green_10);
         notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
     }

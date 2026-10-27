@@ -21,12 +21,16 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
     // receiver scene.
     UNUSED(receiver);
     if(pcsg_filter_accepts(&app->filter, decoder_base)) {
-        if(pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset) ==
-           PCSGHistoryStateAddKeyNewDada) {
-            const uint16_t evicted = pcsg_history_last_evicted(app->txrx->history);
+        const PCSGHistoryStateAddKey state =
+            pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset);
+        const uint16_t evicted = pcsg_history_last_evicted(app->txrx->history);
+        if(state == PCSGHistoryStateAddKeyNewDada || state == PCSGHistoryStateAddKeyOverflow ||
+           evicted) {
             app->txrx->idx_menu_chosen = app->txrx->idx_menu_chosen > evicted ?
                                              app->txrx->idx_menu_chosen - evicted :
                                              0;
+        }
+        if(state == PCSGHistoryStateAddKeyNewDada) {
             notification_message(app->notifications, &sequence_blink_green_10);
             app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
         }

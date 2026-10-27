@@ -164,7 +164,7 @@ void pcsg_view_receiver_set_item_count(PCSGReceiver* pcsg_receiver, uint16_t cou
     pcsg_view_receiver_update_offset(pcsg_receiver);
 }
 
-void pcsg_view_receiver_add_item(
+void pcsg_view_receiver_history_changed(
     PCSGReceiver* pcsg_receiver,
     uint16_t new_count,
     uint16_t evicted) {

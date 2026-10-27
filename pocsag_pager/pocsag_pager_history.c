@@ -363,6 +363,9 @@ PCSGHistoryStateAddKey
     furi_assert(context);
 
     SubGhzProtocolDecoderBase* decoder_base = context;
+    // Callers use this to reconcile their selection after every add attempt,
+    // including duplicate and serialization-error returns.
+    instance->last_evicted = 0;
     const uint8_t hash = subghz_protocol_decoder_base_get_hash_data(decoder_base);
     if(instance->has_last_hash && (instance->code_last_hash_data == hash) &&
        ((furi_get_tick() - instance->last_update_timestamp) < 500)) {
@@ -418,7 +421,6 @@ PCSGHistoryStateAddKey
 
         // Roll the oldest entries off the viewable window while free heap is
         // tight, keeping at least PCSG_HISTORY_MIN_ITEMS. They stay in the log.
-        instance->last_evicted = 0;
         while(instance->count > PCSG_HISTORY_MIN_ITEMS &&
               memmgr_get_free_heap() < PCSG_HISTORY_HEAP_RESERVE) {
             pcsg_history_evict_oldest(instance);

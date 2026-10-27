@@ -131,17 +131,19 @@ bool flex_bch_chase(uint32_t* word, const uint8_t rel[31]) {
     bool unique = false;
     for(uint32_t pattern = 1; pattern < (1UL << FLEX_BCH_CHASE_BITS); pattern++) {
         uint32_t test = received;
-        uint32_t cost = 0;
         for(uint8_t i = 0; i < FLEX_BCH_CHASE_BITS; i++) {
             if(pattern & (1UL << i)) {
                 test ^= 1UL << pos[i];
-                cost += rel[pos[i]];
             }
         }
         uint32_t candidate = test;
         if(flex_bch_correct(&candidate) < 0) continue;
         candidate &= 0x7FFFFFFFU;
-        uint32_t diff = candidate ^ test;
+        // Score the resulting codeword against the received word, not the
+        // path used to reach it. BCH may flip a Chase bit back; charging both
+        // flips would count a bit that is unchanged in the candidate twice.
+        uint32_t cost = 0;
+        uint32_t diff = candidate ^ received;
         while(diff) {
             const uint8_t b = flex_bch_ctz(diff);
             if(b < 31U) cost += rel[b];
