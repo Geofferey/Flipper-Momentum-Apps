@@ -111,6 +111,8 @@ typedef struct {
     uint8_t message_number;
     uint8_t next_fragment;
     uint8_t parts;
+    // Any fragment of this message was recovered by Weak Decode (Chase).
+    bool chase;
     // Phase and frame of the first part received, where the pager listens.
     char phase;
     uint8_t frame;
@@ -375,7 +377,7 @@ static void flex_set_page_header(
         instance->cycle,
         instance->frame,
         instance->page_repaired ? " R" : "",
-        instance->page_chase ? " C" : "",
+        instance->page_chase ? " W" : "", // Weak Decode (Chase); not the 'C' fragment flag
         instance->page_suspect ? " ?" : "",
         capcode);
 }
@@ -701,7 +703,8 @@ static void flex_fragment_flush(
 
     instance->page_repaired = false;
     instance->page_suspect = false;
-    instance->page_chase = false;
+    // Mark the joined message with W if Weak Decode recovered any of its parts.
+    instance->page_chase = slot->chase;
     // Show and filter a joined message by where its first part arrived.
     const uint8_t frame = instance->frame;
     instance->frame = slot->frame;
@@ -738,6 +741,9 @@ static void flex_fragment_add(
     bool continuation,
     const char* text,
     char phase) {
+    // Whether this fragment used Weak Decode (Chase). Capture it before any
+    // flush below resets instance->page_chase.
+    const bool chase_used = instance->page_chase;
     if(fragment == 3U) {
         instance->stats.fragments_first++;
     } else if(continuation) {
@@ -779,6 +785,7 @@ static void flex_fragment_add(
         slot->capcode = capcode;
         slot->type = type;
         slot->message_number = message_number;
+        slot->chase = chase_used;
         slot->text = furi_string_alloc();
         slot->phase = phase;
         slot->frame = instance->frame;
@@ -787,8 +794,11 @@ static void flex_fragment_add(
             furi_string_set_str(slot->text, FLEX_GAP_MARK);
             instance->stats.joined_orphan++;
         }
-    } else if(fragment != slot->next_fragment) {
-        furi_string_cat_str(slot->text, FLEX_GAP_MARK);
+    } else {
+        slot->chase = slot->chase || chase_used;
+        if(fragment != slot->next_fragment) {
+            furi_string_cat_str(slot->text, FLEX_GAP_MARK);
+        }
     }
 
     if(furi_string_size(slot->text) + strlen(text) > FLEX_JOINED_MAX_CHARS) {
