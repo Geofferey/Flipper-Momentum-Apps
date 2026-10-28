@@ -236,7 +236,7 @@ static int32_t flex_sampler_thread(void* context) {
             subghz_protocol_decoder_flex_get_stats(instance->decoder, &decoder_stats);
             FURI_LOG_I(
                 TAG,
-                "n=%lu h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu frame=%lu page=%lu fix=%lu",
+                "n=%lu h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu fix=%lu",
                 instance->sample_count,
                 instance->symbol_count[0],
                 instance->symbol_count[1],
@@ -247,15 +247,18 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.sync_detected,
                 decoder_stats.fiw_valid,
                 decoder_stats.fiw_invalid,
+                decoder_stats.fiw_chase,
                 decoder_stats.frames_completed,
                 decoder_stats.pages_decoded,
                 decoder_stats.pages_repaired);
             // Where pages are lost: word error rate, then each drop reason.
             FURI_LOG_I(
                 TAG,
-                "words=%lu bad=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu",
+                "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu",
                 decoder_stats.words_total,
                 decoder_stats.words_bad,
+                decoder_stats.words_chase,
+                decoder_stats.pages_chase,
                 decoder_stats.phases_bad_biw,
                 decoder_stats.pages_bad_header,
                 decoder_stats.pages_long_address,

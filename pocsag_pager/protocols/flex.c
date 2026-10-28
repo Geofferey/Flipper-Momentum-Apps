@@ -140,6 +140,8 @@ struct SubGhzProtocolDecoderFlex {
 
     uint8_t fiw_count;
     uint32_t fiw_raw;
+    uint8_t fiw_rel[32];
+    bool frame_chase;
     uint8_t cycle;
     uint8_t frame;
 
@@ -226,6 +228,8 @@ static uint8_t flex_popcount(uint32_t value) {
 static void flex_clear_frame(SubGhzProtocolDecoderFlex* instance) {
     instance->fiw_count = 0;
     instance->fiw_raw = 0;
+    memset(instance->fiw_rel, FLEX_REL_HIGH, sizeof(instance->fiw_rel));
+    instance->frame_chase = false;
     instance->sync2_count = 0;
     instance->data_count = 0;
     instance->data_bit_count = 0;
@@ -323,10 +327,7 @@ static bool flex_select_mode(SubGhzProtocolDecoderFlex* instance, uint16_t sync_
     return false;
 }
 
-static bool flex_decode_fiw(SubGhzProtocolDecoderFlex* instance) {
-    uint32_t fiw = instance->fiw_raw;
-    if(flex_bch_correct(&fiw) < 0) return false;
-
+static bool flex_fiw_fields_valid(uint32_t fiw, uint8_t* cycle, uint8_t* frame) {
     fiw &= 0x001FFFFFUL;
     uint8_t checksum = fiw & 0x0F;
     checksum += (fiw >> 4) & 0x0F;
@@ -336,10 +337,36 @@ static bool flex_decode_fiw(SubGhzProtocolDecoderFlex* instance) {
     checksum += (fiw >> 20) & 0x01;
     if((checksum & 0x0F) != 0x0F) return false;
 
-    instance->cycle = (fiw >> 4) & 0x0F;
-    instance->frame = (fiw >> 8) & 0x7F;
-    if(instance->cycle > 14U) return false;
+    *cycle = (fiw >> 4) & 0x0F;
+    *frame = (fiw >> 8) & 0x7F;
+    if(*cycle > 14U) return false;
     return true;
+}
+
+static bool flex_decode_fiw(SubGhzProtocolDecoderFlex* instance) {
+    uint8_t cycle;
+    uint8_t frame;
+    uint32_t fiw = instance->fiw_raw;
+    if(flex_bch_correct(&fiw) >= 0 && flex_fiw_fields_valid(fiw, &cycle, &frame)) {
+        instance->cycle = cycle;
+        instance->frame = frame;
+        instance->frame_chase = false;
+        return true;
+    }
+
+    // The FIW gates the entire frame. If hard BCH or the FIW checksum fails,
+    // give Weak Decode the original samples rather than discarding all phases.
+    fiw = instance->fiw_raw;
+    if(instance->weak_decode && instance->four_level_path &&
+       flex_bch_chase(&fiw, instance->fiw_rel) &&
+       flex_fiw_fields_valid(fiw, &cycle, &frame)) {
+        instance->cycle = cycle;
+        instance->frame = frame;
+        instance->frame_chase = true;
+        instance->stats.fiw_chase++;
+        return true;
+    }
+    return false;
 }
 
 static bool flex_word_checksum_valid(uint32_t word) {
@@ -1058,7 +1085,8 @@ static void flex_decode_phase(
         instance->page_suspect = false;
         // Weak Decode marker: note whether any header word this page is built
         // from was recovered by Chase. Message words are OR'd in below.
-        instance->page_chase = chased[vector_index] || chased[address_index];
+        instance->page_chase =
+            instance->frame_chase || chased[vector_index] || chased[address_index];
         if(long_address) {
             instance->page_chase = instance->page_chase || chased[address_index - 1U];
             if(long_data_index < FLEX_PHASE_WORDS) {
@@ -1211,6 +1239,11 @@ static void flex_rel_push(
     w[FLEX_REL_WORD - 1U] = rel;
 }
 
+static void flex_fiw_rel_push(SubGhzProtocolDecoderFlex* instance, uint8_t rel) {
+    memmove(instance->fiw_rel, instance->fiw_rel + 1, sizeof(instance->fiw_rel) - 1U);
+    instance->fiw_rel[sizeof(instance->fiw_rel) - 1U] = rel;
+}
+
 static void flex_read_data_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t symbol) {
     const uint16_t index =
         ((instance->data_bit_count >> 5) & 0xFFF8U) | (instance->data_bit_count & 0x0007U);
@@ -1271,6 +1304,8 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t sym
             instance->inverted = inverted;
             instance->fiw_count = 0;
             instance->fiw_raw = 0;
+            memset(instance->fiw_rel, FLEX_REL_HIGH, sizeof(instance->fiw_rel));
+            instance->frame_chase = false;
             instance->state = FlexDecoderStateFiw;
             FURI_LOG_D(
                 TAG,
@@ -1290,6 +1325,7 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t sym
         instance->fiw_count++;
         if(instance->fiw_count > 16U) {
             instance->fiw_raw = (instance->fiw_raw >> 1) | (bit ? 0x80000000UL : 0);
+            flex_fiw_rel_push(instance, instance->cur_rel_a);
         }
         if(instance->fiw_count == 48U) {
             if(flex_decode_fiw(instance)) {
@@ -1441,17 +1477,22 @@ void subghz_protocol_decoder_flex_feed_4fsk_sample(void* context, uint8_t hard_s
 
     if(!instance->clock_decided && advance > 0 && to_decision != 0 &&
        to_decision <= (uint16_t)advance) {
-        uint8_t voted_level = instance->clock_center_level;
-        for(uint8_t i = 0; i < COUNT_OF(instance->clock_votes); i++) {
-            if(instance->clock_votes[i] > instance->clock_votes[voted_level]) voted_level = i;
-        }
+        // Decide the A and B bit streams independently. They are separately
+        // BCH-coded, so two adjacent noisy levels can jointly outvote the
+        // modal level even when neither is individually the most common.
+        const int16_t va = (int16_t)(instance->clock_votes[2] + instance->clock_votes[3]) -
+                           (int16_t)(instance->clock_votes[0] + instance->clock_votes[1]);
+        const int16_t vb = (int16_t)(instance->clock_votes[1] + instance->clock_votes[2]) -
+                           (int16_t)(instance->clock_votes[0] + instance->clock_votes[3]);
+        const bool center_a = instance->clock_center_level > 1U;
+        const bool center_b =
+            instance->clock_center_level == 1U || instance->clock_center_level == 2U;
+        const bool bit_a = va == 0 ? center_a : va > 0;
+        const bool bit_b = vb == 0 ? center_b : vb > 0;
+        const uint8_t voted_level = bit_a ? (bit_b ? 2U : 3U) : (bit_b ? 1U : 0U);
         if(instance->weak_decode) {
             // Per-bit reliability for Weak Decode: the vote margin of each bit
             // the symbol carries (a = levels 2,3; b = levels 1,2).
-            const int16_t va = (int16_t)(instance->clock_votes[2] + instance->clock_votes[3]) -
-                               (int16_t)(instance->clock_votes[0] + instance->clock_votes[1]);
-            const int16_t vb = (int16_t)(instance->clock_votes[1] + instance->clock_votes[2]) -
-                               (int16_t)(instance->clock_votes[0] + instance->clock_votes[3]);
             instance->cur_rel_a = (uint8_t)MIN((va < 0 ? -va : va), (int16_t)FLEX_REL_HIGH);
             instance->cur_rel_b = (uint8_t)MIN((vb < 0 ? -vb : vb), (int16_t)FLEX_REL_HIGH);
         }

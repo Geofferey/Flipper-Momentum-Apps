@@ -8,6 +8,8 @@ typedef struct {
     uint32_t sync_detected;
     uint32_t fiw_valid;
     uint32_t fiw_invalid;
+    /** Frame information words recovered by the opt-in soft decoder. */
+    uint32_t fiw_chase;
     uint32_t frames_completed;
     uint32_t pages_decoded;
     uint32_t pages_repaired;

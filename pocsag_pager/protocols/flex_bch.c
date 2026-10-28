@@ -102,9 +102,10 @@ static void flex_bch_init(void) {
     flex_bch_initialized = true;
 }
 
-bool flex_bch_chase(uint32_t* word, const uint8_t rel[31]) {
+bool flex_bch_chase(uint32_t* word, const uint8_t rel[32]) {
     flex_bch_init();
-    const uint32_t received = *word & 0x7FFFFFFFU;
+    const uint32_t received = *word;
+    const uint32_t received_bch = received & 0x7FFFFFFFU;
 
     // The FLEX_BCH_CHASE_BITS least-reliable data-word bit positions (0..30).
     uint8_t pos[FLEX_BCH_CHASE_BITS];
@@ -130,7 +131,7 @@ bool flex_bch_chase(uint32_t* word, const uint8_t rel[31]) {
     uint32_t best_cost = UINT32_MAX;
     bool unique = false;
     for(uint32_t pattern = 1; pattern < (1UL << FLEX_BCH_CHASE_BITS); pattern++) {
-        uint32_t test = received;
+        uint32_t test = received_bch;
         for(uint8_t i = 0; i < FLEX_BCH_CHASE_BITS; i++) {
             if(pattern & (1UL << i)) {
                 test ^= 1UL << pos[i];
@@ -139,6 +140,10 @@ bool flex_bch_chase(uint32_t* word, const uint8_t rel[31]) {
         uint32_t candidate = test;
         if(flex_bch_correct(&candidate) < 0) continue;
         candidate &= 0x7FFFFFFFU;
+        // The 32nd transmitted bit makes the complete word even parity. It is
+        // not part of BCH(31,21), but its soft evidence helps distinguish BCH
+        // candidates that otherwise have similar costs.
+        candidate |= (uint32_t)(flex_bch_popcount(candidate) & 1U) << 31;
         // Score the resulting codeword against the received word, not the
         // path used to reach it. BCH may flip a Chase bit back; charging both
         // flips would count a bit that is unchanged in the candidate twice.
@@ -146,7 +151,7 @@ bool flex_bch_chase(uint32_t* word, const uint8_t rel[31]) {
         uint32_t diff = candidate ^ received;
         while(diff) {
             const uint8_t b = flex_bch_ctz(diff);
-            if(b < 31U) cost += rel[b];
+            cost += rel[b];
             diff &= diff - 1U;
         }
         if(cost < best_cost) {

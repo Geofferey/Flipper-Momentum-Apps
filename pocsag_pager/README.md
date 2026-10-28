@@ -81,6 +81,17 @@ Receiver settings and the transmitter protocol, frequency, address, function,
 baud, polarity and correction are saved on a clean app exit. Message text is
 deliberately not saved.
 
+Reception and error correction:
+
+- POCSAG applies BCH(31,21) plus even-parity validation to every codeword,
+  correcting any one- or two-bit error. Frame sync tolerates two bad bits, and
+  the decoder measures the transmitter's bit period from the preamble.
+- An uncorrectable POCSAG message word is shown as `?` characters while later
+  words stay aligned and remain decodable.
+- FLEX applies BCH to every phase word. Optional **Weak Decode** uses the
+  sampled bit confidence to recover additional codewords and FIWs; pages that
+  depend on a soft recovery are marked `W`.
+
 FLEX decoding features:
 
 - Every page in every phase of a frame is decoded.
