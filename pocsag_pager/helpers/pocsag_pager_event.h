@@ -18,6 +18,7 @@ typedef enum {
     PCSGCustomEventTxSend,
 
     PCSGCustomEventViewReceiverOK,
+    PCSGCustomEventViewReceiverFilterAddress,
     PCSGCustomEventViewReceiverConfig,
     PCSGCustomEventViewReceiverBack,
     PCSGCustomEventViewReceiverOffDisplay,

@@ -47,6 +47,13 @@ void pcsg_history_make_label(char* label, size_t size, const char* ric, const ch
 
 typedef struct PCSGHistory PCSGHistory;
 
+/** Address kind stored in a received message header. */
+typedef enum {
+    PCSGHistoryAddressNone,
+    PCSGHistoryAddressFlexCap,
+    PCSGHistoryAddressPocsagRic,
+} PCSGHistoryAddressType;
+
 /** History state add key */
 typedef enum {
     PCSGHistoryStateAddKeyUnknown,
@@ -139,3 +146,10 @@ PCSGHistoryStateAddKey
  *         call, or NULL if the log could not be read
  */
 FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx);
+
+/** Read the FLEX CAP or POCSAG RIC from a viewable history entry. */
+bool pcsg_history_get_address(
+    PCSGHistory* instance,
+    uint16_t idx,
+    PCSGHistoryAddressType* type,
+    uint32_t* address);

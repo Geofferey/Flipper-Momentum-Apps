@@ -8,6 +8,7 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFlexBinary,
     PCSGSettingIndexFlexDups,
     PCSGSettingIndexFlexEncrypted,
+    PCSGSettingIndexFlexPartial,
     PCSGSettingIndexLogging,
     PCSGSettingIndexAlert,
     PCSGSettingIndexReceiveLed,
@@ -31,6 +32,7 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFreqMode,
     PCSGSettingIndexFreqCorr,
     PCSGSettingIndexRawCapture,
+    PCSGSettingIndexStatsLog,
     PCSGSettingIndexWeakDecode,
     PCSGSettingIndexLock,
 };

@@ -343,6 +343,28 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneReceiverInfo);
             consumed = true;
             break;
+        case PCSGCustomEventViewReceiverFilterAddress: {
+            const uint16_t index = pcsg_view_receiver_get_idx_menu(app->pcsg_receiver);
+            PCSGHistoryAddressType type;
+            uint32_t address;
+            if(pcsg_history_get_address(app->txrx->history, index, &type, &address)) {
+                if(type == PCSGHistoryAddressFlexCap && address <= PCSG_CAPCODE_MAX) {
+                    app->filter.capcode_filter = PCSGCapcodeFilterExact;
+                    app->filter.capcode_min = address;
+                    app->filter.capcode_max = address;
+                    pcsg_view_receiver_show_address_filter(app->pcsg_receiver, true, address);
+                    pcsg_settings_save(app);
+                } else if(type == PCSGHistoryAddressPocsagRic && address <= PCSG_RIC_MAX) {
+                    app->filter.ric_filter = PCSGCapcodeFilterExact;
+                    app->filter.ric_min = address;
+                    app->filter.ric_max = address;
+                    pcsg_view_receiver_show_address_filter(app->pcsg_receiver, false, address);
+                    pcsg_settings_save(app);
+                }
+            }
+            consumed = true;
+            break;
+        }
         case PCSGCustomEventViewReceiverConfig:
             app->config_standalone = false;
             app->txrx->idx_menu_chosen = pcsg_view_receiver_get_idx_menu(app->pcsg_receiver);

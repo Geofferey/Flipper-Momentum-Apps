@@ -65,4 +65,10 @@ uint16_t pcsg_view_receiver_get_idx_menu(PCSGReceiver* pcsg_receiver);
 
 void pcsg_view_receiver_set_idx_menu(PCSGReceiver* pcsg_receiver, uint16_t idx);
 
+/** Briefly confirm that a CAP or RIC exact filter was applied. */
+void pcsg_view_receiver_show_address_filter(
+    PCSGReceiver* pcsg_receiver,
+    bool cap,
+    uint32_t address);
+
 void pcsg_view_receiver_exit(void* context);

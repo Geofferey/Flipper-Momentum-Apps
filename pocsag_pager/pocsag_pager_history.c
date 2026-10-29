@@ -351,6 +351,67 @@ FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx) {
     return result;
 }
 
+static bool pcsg_history_parse_address(const char* text, const char* tag, uint32_t* address) {
+    const char* cursor = strstr(text, tag);
+    if(!cursor) return false;
+    cursor += strlen(tag);
+    if(*cursor < '0' || *cursor > '9') return false;
+
+    uint32_t value = 0;
+    do {
+        const uint32_t digit = (uint32_t)(*cursor - '0');
+        if(value > (UINT32_MAX - digit) / 10U) return false;
+        value = value * 10U + digit;
+        cursor++;
+    } while(*cursor >= '0' && *cursor <= '9');
+
+    *address = value;
+    return true;
+}
+
+bool pcsg_history_get_address(
+    PCSGHistory* instance,
+    uint16_t idx,
+    PCSGHistoryAddressType* type,
+    uint32_t* address) {
+    furi_assert(instance);
+    furi_assert(type);
+    furi_assert(address);
+    *type = PCSGHistoryAddressNone;
+    *address = 0;
+
+    bool result = false;
+    FuriString* ric = furi_string_alloc();
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+
+    do {
+        if(idx >= instance->count || !instance->file_open) break;
+        const PCSGHistoryItem* item = pcsg_history_item(instance, idx);
+        char* buffer = malloc(item->length + 1U);
+        const bool read = storage_file_seek(instance->file, item->offset, true) &&
+                          storage_file_read(instance->file, buffer, item->length) == item->length;
+        buffer[read ? item->length : 0] = '\0';
+
+        char* fields[PCSGLogFieldCount];
+        if(read && pcsg_history_split_line(buffer, fields)) {
+            pcsg_block_generic_unescape(ric, fields[PCSGLogFieldRic]);
+            const char* header = furi_string_get_cstr(ric);
+            if(!strcmp(fields[PCSGLogFieldProtocol], "FLEX")) {
+                result = pcsg_history_parse_address(header, "CAP: ", address);
+                if(result) *type = PCSGHistoryAddressFlexCap;
+            } else if(!strcmp(fields[PCSGLogFieldProtocol], "POCSAG")) {
+                result = pcsg_history_parse_address(header, "RIC: ", address);
+                if(result) *type = PCSGHistoryAddressPocsagRic;
+            }
+        }
+        free(buffer);
+    } while(false);
+
+    furi_mutex_release(instance->mutex);
+    furi_string_free(ric);
+    return result;
+}
+
 PCSGHistoryStateAddKey
     pcsg_history_add_to_history(
         PCSGHistory* instance,

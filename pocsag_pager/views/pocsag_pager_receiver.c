@@ -26,6 +26,7 @@ typedef enum {
     PCSGReceiverBarShowToUnlockPress,
     PCSGReceiverBarShowUnlock,
     PCSGReceiverBarShowHoldBack,
+    PCSGReceiverBarShowAddressFilter,
 } PCSGReceiverBarShow;
 
 #define HOLD_BACK_HINT_MS 1500
@@ -53,6 +54,7 @@ typedef struct {
     PCSGReceiverBarShow bar_show;
     uint8_t u_rssi;
     bool ext_module;
+    char filter_hint[24];
     // Browsing a saved log: no radio, so no Config button or RSSI.
     bool review;
 } PCSGReceiverModel;
@@ -304,6 +306,10 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
     case PCSGReceiverBarShowHoldBack:
         canvas_draw_str(canvas, 44, 62, "Hold Back to exit");
         break;
+    case PCSGReceiverBarShowAddressFilter:
+        canvas_draw_str_aligned(
+            canvas, 64, 62, AlignCenter, AlignBottom, model->filter_hint);
+        break;
     default:
         canvas_draw_str(canvas, 44, 62, furi_string_get_cstr(model->frequency_str));
         canvas_draw_str(canvas, 79, 62, furi_string_get_cstr(model->preset_str));
@@ -336,7 +342,8 @@ static void pcsg_view_receiver_hint_timer_callback(void* context) {
         pcsg_receiver->view,
         PCSGReceiverModel * model,
         {
-            if(model->bar_show == PCSGReceiverBarShowHoldBack) {
+            if(model->bar_show == PCSGReceiverBarShowHoldBack ||
+               model->bar_show == PCSGReceiverBarShowAddressFilter) {
                 model->bar_show = PCSGReceiverBarShowDefault;
             }
         },
@@ -417,6 +424,17 @@ bool pcsg_view_receiver_input(InputEvent* event, void* context) {
         if(!review) {
             pcsg_receiver->callback(PCSGCustomEventViewReceiverConfig, pcsg_receiver->context);
         }
+    } else if(event->key == InputKeyOk && event->type == InputTypeLong) {
+        with_view_model(
+            pcsg_receiver->view,
+            PCSGReceiverModel * model,
+            {
+                if(!model->review && model->history_item != 0) {
+                    pcsg_receiver->callback(
+                        PCSGCustomEventViewReceiverFilterAddress, pcsg_receiver->context);
+                }
+            },
+            false);
     } else if(event->key == InputKeyOk && event->type == InputTypeShort) {
         with_view_model(
             pcsg_receiver->view,
@@ -518,6 +536,27 @@ uint16_t pcsg_view_receiver_get_idx_menu(PCSGReceiver* pcsg_receiver) {
     with_view_model(
         pcsg_receiver->view, PCSGReceiverModel * model, { idx = model->idx; }, false);
     return idx;
+}
+
+void pcsg_view_receiver_show_address_filter(
+    PCSGReceiver* pcsg_receiver,
+    bool cap,
+    uint32_t address) {
+    furi_assert(pcsg_receiver);
+    with_view_model(
+        pcsg_receiver->view,
+        PCSGReceiverModel * model,
+        {
+            snprintf(
+                model->filter_hint,
+                sizeof(model->filter_hint),
+                "%s %lu filter",
+                cap ? "CAP" : "RIC",
+                (unsigned long)address);
+            model->bar_show = PCSGReceiverBarShowAddressFilter;
+        },
+        true);
+    furi_timer_start(pcsg_receiver->hint_timer, HOLD_BACK_HINT_MS);
 }
 
 void pcsg_view_receiver_set_idx_menu(PCSGReceiver* pcsg_receiver, uint16_t idx) {
