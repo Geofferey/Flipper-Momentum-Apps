@@ -90,6 +90,11 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
     subghz_devices_flush_rx(app->txrx->radio_device);
     subghz_devices_set_rx(app->txrx->radio_device);
 
+    // Apply the saved setting from a known silent state. This also clears a
+    // sampler-owned Synth mode left by an earlier receive session.
+    flex_sampler_set_sound(app->txrx->flex_sampler, FlexSamplerSoundOff, NULL, 0.0f, NULL);
+    subghz_devices_set_async_mirror_pin(app->txrx->radio_device, NULL);
+
     // Signal sound. Raw mirrors the received data to the speaker pin, as the
     // Sub-GHz app does; FLEX4 has no async capture to mirror, so its sampler
     // drives the pin. Tone (FLEX4 only) plays each level as a pitch through
@@ -130,6 +135,8 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
     if(flex4) {
         flex_sampler_set_capture(app->txrx->flex_sampler, app->filter.raw_capture);
         flex_sampler_set_stats_log(app->txrx->flex_sampler, app->filter.stats_log);
+        flex_sampler_set_freq_correction(
+            app->txrx->flex_sampler, app->filter.freq_correction_ppm);
         flex_sampler_set_weak_decode(app->txrx->flex_sampler, app->filter.weak_decode);
         flex_sampler_start(app->txrx->flex_sampler);
     } else {
@@ -157,9 +164,11 @@ void pcsg_rx_end(POCSAGPagerApp* app) {
         subghz_worker_stop(app->txrx->worker);
         subghz_devices_stop_async_rx(app->txrx->radio_device);
     }
+    // Synth owns and releases the speaker inside the sampler thread, so sound
+    // state must be cleared independently of the app-owned speaker flag.
+    flex_sampler_set_sound(app->txrx->flex_sampler, FlexSamplerSoundOff, NULL, 0.0f, NULL);
+    subghz_devices_set_async_mirror_pin(app->txrx->radio_device, NULL);
     if(app->txrx->speaker_on) {
-        flex_sampler_set_sound(app->txrx->flex_sampler, FlexSamplerSoundOff, NULL, 0.0f, NULL);
-        subghz_devices_set_async_mirror_pin(app->txrx->radio_device, NULL);
         if(furi_hal_speaker_is_mine()) {
             furi_hal_speaker_stop();
             furi_hal_speaker_release();
@@ -182,11 +191,14 @@ void pcsg_sleep(POCSAGPagerApp* app) {
 #define PCSG_FREQEST_STEP_HZ 1587
 
 // Read the demodulator's carrier-offset estimate, in Hz (signed), or INT32_MIN
-// if unavailable. SPI shares MISO with the FLEX4 sampling pin, so this must not
-// be called while the FLEX4 sampler is running.
+// if unavailable. SPI shares MISO with FLEX4 sampling, so a running sampler
+// must be paused first.
 int32_t pcsg_freqest_read_hz(POCSAGPagerApp* app) {
     furi_assert(app);
-    if(flex_sampler_is_running(app->txrx->flex_sampler)) return INT32_MIN;
+    if(flex_sampler_is_running(app->txrx->flex_sampler) &&
+       !flex_sampler_is_paused(app->txrx->flex_sampler)) {
+        return INT32_MIN;
+    }
 
     const FuriHalSpiBusHandle* handle =
         radio_device_loader_is_external(app->txrx->radio_device) ?
@@ -215,10 +227,14 @@ void pcsg_retune(POCSAGPagerApp* app) {
 #define PCSG_FREQ_AUTO_RSSI_MIN     (-80.0f)
 #define PCSG_FREQ_AUTO_MIN_SAMPLES  15U
 #define PCSG_FREQ_AUTO_INTERVAL_MS  3000U
-// FLEX4 pauses sampling to measure, so it does so rarely and in one burst.
+// FLEX4 briefly pauses sampling after a valid frame. Several agreeing frames
+// are required to retune.
 #define PCSG_FREQ_AUTO_FLEX4_INTERVAL_MS 20000U
-#define PCSG_FREQ_AUTO_BURST             16U
-#define PCSG_FREQ_AUTO_BURST_GAP_MS      3U
+#define PCSG_FREQ_AUTO_FLEX4_STALE_MS    60000U
+#define PCSG_FREQ_AUTO_FLEX4_RECENT_MS   3000U
+#define PCSG_FREQ_AUTO_FLEX4_WINDOWS     3U
+#define PCSG_FREQ_AUTO_MAX_EST_HZ        30000
+#define PCSG_FREQ_AUTO_MAX_STEP_PPM      2
 // One ppm is the finest correction the setting can express, so anything larger
 // would leave a standing error the loop refuses to act on.
 #define PCSG_FREQ_AUTO_DEADBAND_PPM 1
@@ -232,41 +248,91 @@ void pcsg_retune(POCSAGPagerApp* app) {
  */
 /*
  * FLEX4 cannot read FREQEST while sampling, because the sampler owns the pin
- * SPI needs for MISO. Pause it briefly between frames instead and burst-sample
- * the estimate, which is enough for one averaging window, then resume. Only
- * between frames, so no frame in progress is lost, and never while a raw
- * capture is running, because restarting the sampler would start a new file.
+ * SPI needs for MISO. Pause briefly after a completed frame and read the held
+ * carrier estimate immediately, before idle noise replaces it. Raw capture
+ * remains uninterrupted by skipping calibration while it is enabled.
  */
 static void pcsg_freq_auto_flex4_blip(POCSAGPagerApp* app) {
     if(app->filter.raw_capture) return;
     if(flex_sampler_is_locked(app->txrx->flex_sampler)) return;
 
     const uint32_t now = furi_get_tick();
+    if(app->freq_cal_flex_frame_tick == 0 ||
+       now - app->freq_cal_flex_frame_tick >
+           furi_ms_to_ticks(PCSG_FREQ_AUTO_FLEX4_RECENT_MS)) {
+        return;
+    }
     if(app->freq_cal_blip_tick != 0 &&
        now - app->freq_cal_blip_tick < furi_ms_to_ticks(PCSG_FREQ_AUTO_FLEX4_INTERVAL_MS)) {
         return;
     }
     app->freq_cal_blip_tick = now;
 
-    flex_sampler_stop(app->txrx->flex_sampler);
-    // Spread the reads so the demodulator's estimate can move between them;
-    // identical back-to-back samples would average to no better resolution.
-    for(uint8_t i = 0; i < PCSG_FREQ_AUTO_BURST; i++) {
-        const int32_t hz = pcsg_freqest_read_hz(app);
-        if(hz != INT32_MIN) {
-            app->freq_cal_sum_hz += hz;
-            app->freq_cal_count++;
-        }
-        furi_delay_ms(PCSG_FREQ_AUTO_BURST_GAP_MS);
+    // Preserve the last carrier-derived estimate: once the frame is gone,
+    // delayed reads follow noise and can keep steering through the optimum.
+    flex_sampler_pause(app->txrx->flex_sampler);
+    const int32_t estimate_hz = pcsg_freqest_read_hz(app);
+    flex_sampler_resume(app->txrx->flex_sampler);
+    app->freq_cal_flex_frame_tick = 0;
+
+    if(estimate_hz == INT32_MIN || estimate_hz > PCSG_FREQ_AUTO_MAX_EST_HZ ||
+       estimate_hz < -PCSG_FREQ_AUTO_MAX_EST_HZ) {
+        return;
     }
-    flex_sampler_start(app->txrx->flex_sampler);
+
+    // A centered frame cancels older evidence. Otherwise require successive
+    // completed frames to agree on which direction the receiver should move.
+    if(estimate_hz <= PCSG_FREQEST_STEP_HZ && estimate_hz >= -PCSG_FREQEST_STEP_HZ) {
+        app->freq_cal_sum_hz = 0;
+        app->freq_cal_count = 0;
+        app->freq_cal_direction = 0;
+        return;
+    }
+
+    const int8_t direction = estimate_hz > 0 ? 1 : -1;
+    if(app->freq_cal_direction != 0 && app->freq_cal_direction != direction) {
+        app->freq_cal_sum_hz = 0;
+        app->freq_cal_count = 0;
+    }
+    app->freq_cal_direction = direction;
+    app->freq_cal_sum_hz += estimate_hz;
+    app->freq_cal_count++;
 }
 
 void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi) {
     furi_assert(app);
     if(!app->filter.freq_auto || app->txrx->txrx_state != PCSGTxRxStateRx) return;
 
-    if(flex_sampler_is_running(app->txrx->flex_sampler)) {
+    const uint32_t now = furi_get_tick();
+    const bool flex4 = flex_sampler_is_running(app->txrx->flex_sampler);
+    if(app->freq_cal_flex4 != flex4) {
+        app->freq_cal_sum_hz = 0;
+        app->freq_cal_count = 0;
+        app->freq_cal_direction = 0;
+        app->freq_cal_blip_tick = 0;
+        app->freq_cal_tick = now;
+        app->freq_cal_flex4 = flex4;
+        app->freq_cal_flex_frames = 0;
+        app->freq_cal_flex_frame_tick = 0;
+    }
+
+    if(flex4 && app->freq_cal_count > 0 && app->freq_cal_blip_tick != 0 &&
+       now - app->freq_cal_blip_tick > furi_ms_to_ticks(PCSG_FREQ_AUTO_FLEX4_STALE_MS)) {
+        app->freq_cal_sum_hz = 0;
+        app->freq_cal_count = 0;
+        app->freq_cal_direction = 0;
+    }
+
+    if(flex4) {
+        const uint32_t completed_frames =
+            flex_sampler_completed_frames(app->txrx->flex_sampler);
+        if(completed_frames < app->freq_cal_flex_frames) {
+            app->freq_cal_flex_frames = completed_frames;
+            app->freq_cal_flex_frame_tick = 0;
+        } else if(completed_frames > app->freq_cal_flex_frames) {
+            app->freq_cal_flex_frames = completed_frames;
+            app->freq_cal_flex_frame_tick = now;
+        }
         pcsg_freq_auto_flex4_blip(app);
     } else if(rssi > PCSG_FREQ_AUTO_RSSI_MIN) {
         const int32_t hz = pcsg_freqest_read_hz(app);
@@ -276,8 +342,9 @@ void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi) {
         }
     }
 
-    const uint32_t now = furi_get_tick();
-    if(app->freq_cal_count < PCSG_FREQ_AUTO_MIN_SAMPLES ||
+    const uint16_t required_samples =
+        flex4 ? PCSG_FREQ_AUTO_FLEX4_WINDOWS : PCSG_FREQ_AUTO_MIN_SAMPLES;
+    if(app->freq_cal_count < required_samples ||
        now - app->freq_cal_tick < furi_ms_to_ticks(PCSG_FREQ_AUTO_INTERVAL_MS)) {
         return;
     }
@@ -295,10 +362,15 @@ void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi) {
     }
     app->freq_cal_sum_hz = 0;
     app->freq_cal_count = 0;
+    app->freq_cal_direction = 0;
     app->freq_cal_tick = now;
 
     if(delta_ppm <= PCSG_FREQ_AUTO_DEADBAND_PPM && delta_ppm >= -PCSG_FREQ_AUTO_DEADBAND_PPM) {
         return;
+    }
+    if(flex4) {
+        delta_ppm = CLAMP(
+            delta_ppm, PCSG_FREQ_AUTO_MAX_STEP_PPM, -PCSG_FREQ_AUTO_MAX_STEP_PPM);
     }
     int32_t ppm = app->filter.freq_correction_ppm + delta_ppm;
     ppm = CLAMP(ppm, PCSG_FREQ_PPM_MAX, -PCSG_FREQ_PPM_MAX);

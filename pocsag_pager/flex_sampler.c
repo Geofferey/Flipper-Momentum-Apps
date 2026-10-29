@@ -118,6 +118,7 @@ struct FlexSampler {
     const GpioPin* data_msb;
     const GpioPin* data_lsb;
     volatile bool running;
+    volatile bool paused;
     volatile bool overrun;
     volatile uint16_t head;
     volatile uint16_t tail;
@@ -145,6 +146,9 @@ struct FlexSampler {
     bool capture_enable;
     // Write counter-only snapshots to /ext/pocsag/stats.txt.
     bool stats_log_enable;
+    bool stats_session_started;
+    uint16_t stats_segment;
+    int32_t freq_correction_ppm;
     bool weak_decode_enable;
 };
 
@@ -153,21 +157,28 @@ struct FlexSampler {
 // RX_HARD_DATA symbol to level, as in the FLEX decoder.
 static const uint8_t flex_sampler_levels[] = {1U, 0U, 2U, 3U};
 
-static void flex_stats_file_open(FlexStatsFile* stats_file, const FlexSampler* instance) {
+static void flex_stats_file_open(FlexStatsFile* stats_file, FlexSampler* instance) {
     memset(stats_file, 0, sizeof(FlexStatsFile));
     stats_file->storage = furi_record_open(RECORD_STORAGE);
     storage_simply_mkdir(stats_file->storage, EXT_PATH("pocsag"));
     stats_file->file = storage_file_alloc(stats_file->storage);
+    const FS_OpenMode open_mode =
+        instance->stats_session_started ? FSOM_OPEN_APPEND : FSOM_CREATE_ALWAYS;
     stats_file->open = storage_file_open(
-        stats_file->file, FLEX_STATS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS);
+        stats_file->file, FLEX_STATS_PATH, FSAM_WRITE, open_mode);
     if(stats_file->open) {
-        char header[96];
+        instance->stats_session_started = true;
+        instance->stats_segment++;
+        char header[128];
         const int length = snprintf(
             header,
             sizeof(header),
-            "# FLEX4 counters only; no message content\nweak_decode=%u raw_capture=%u\n\n",
+            "# FLEX4 segment %u; counters reset; no message content\n"
+            "weak_decode=%u raw_capture=%u ppm=%ld\n\n",
+            instance->stats_segment,
             instance->weak_decode_enable,
-            instance->capture_enable);
+            instance->capture_enable,
+            (long)instance->freq_correction_ppm);
         if(length > 0) {
             storage_file_write(
                 stats_file->file, header, MIN((size_t)length, sizeof(header) - 1U));
@@ -189,11 +200,12 @@ static void flex_stats_file_write(
     const int length = snprintf(
         buffer,
         sizeof(buffer),
-        "n=%lu h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu\n"
+        "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu\n"
         "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu\n"
         "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu\n"
         "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n\n",
         instance->sample_count,
+        (long)instance->freq_correction_ppm,
         instance->symbol_count[0],
         instance->symbol_count[1],
         instance->symbol_count[2],
@@ -310,7 +322,10 @@ static int32_t flex_sampler_thread(void* context) {
     bool synth_speaker = false;
     if(instance->sound == FlexSamplerSoundSynth) {
         synth_speaker = furi_hal_speaker_acquire(30);
-        if(!synth_speaker) {
+        if(synth_speaker) {
+            subghz_protocol_decoder_flex_set_synth(
+                instance->decoder, instance->sound_tones, instance->sound_volume, true);
+        } else {
             subghz_protocol_decoder_flex_set_synth(instance->decoder, NULL, 0.0f, false);
         }
     }
@@ -346,8 +361,9 @@ static int32_t flex_sampler_thread(void* context) {
             subghz_protocol_decoder_flex_get_stats(instance->decoder, &decoder_stats);
             FURI_LOG_I(
                 TAG,
-                "n=%lu h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu",
+                "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu",
                 instance->sample_count,
+                (long)instance->freq_correction_ppm,
                 instance->symbol_count[0],
                 instance->symbol_count[1],
                 instance->symbol_count[2],
@@ -494,6 +510,7 @@ void flex_sampler_start(FlexSampler* instance) {
     instance->transition_count = 0;
     instance->last_symbol = 0;
     instance->last_symbol_valid = false;
+    instance->paused = false;
     subghz_protocol_decoder_flex_reset_stats(instance->decoder);
     instance->decoder->protocol->decoder->reset(instance->decoder);
     furi_hal_gpio_init(instance->data_msb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
@@ -508,7 +525,8 @@ void flex_sampler_stop(FlexSampler* instance) {
     furi_assert(instance);
     if(!instance->running) return;
 
-    flex_sampler_timer_stop();
+    if(!instance->paused) flex_sampler_timer_stop();
+    instance->paused = false;
     instance->running = false;
     furi_thread_join(instance->thread);
     furi_thread_free(instance->thread);
@@ -517,6 +535,24 @@ void flex_sampler_stop(FlexSampler* instance) {
     instance->samples = NULL;
     instance->head = 0;
     instance->tail = 0;
+}
+
+void flex_sampler_pause(FlexSampler* instance) {
+    furi_assert(instance);
+    furi_assert(instance->running);
+    furi_assert(!instance->paused);
+    flex_sampler_timer_stop();
+    instance->paused = true;
+}
+
+void flex_sampler_resume(FlexSampler* instance) {
+    furi_assert(instance);
+    furi_assert(instance->running);
+    furi_assert(instance->paused);
+    furi_hal_gpio_init(instance->data_msb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
+    furi_hal_gpio_init(instance->data_lsb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
+    instance->paused = false;
+    flex_sampler_timer_start(instance);
 }
 
 void flex_sampler_set_sound(
@@ -546,7 +582,16 @@ void flex_sampler_set_capture(FlexSampler* instance, bool enable) {
 
 void flex_sampler_set_stats_log(FlexSampler* instance, bool enable) {
     furi_assert(instance);
+    if(enable && !instance->stats_log_enable) {
+        instance->stats_session_started = false;
+        instance->stats_segment = 0;
+    }
     instance->stats_log_enable = enable;
+}
+
+void flex_sampler_set_freq_correction(FlexSampler* instance, int32_t ppm) {
+    furi_assert(instance);
+    instance->freq_correction_ppm = ppm;
 }
 
 void flex_sampler_set_weak_decode(FlexSampler* instance, bool enable) {
@@ -560,9 +605,21 @@ bool flex_sampler_is_running(const FlexSampler* instance) {
     return instance->running;
 }
 
+bool flex_sampler_is_paused(const FlexSampler* instance) {
+    furi_assert(instance);
+    return instance->paused;
+}
+
 bool flex_sampler_is_locked(const FlexSampler* instance) {
     furi_assert(instance);
     // Cached by the sampler thread each pass; reading it costs no SPI, unlike
     // asking the radio, so it is safe to poll while sampling.
     return instance->running && instance->sound_gate;
+}
+
+uint32_t flex_sampler_completed_frames(const FlexSampler* instance) {
+    furi_assert(instance);
+    FlexDecoderStats stats;
+    subghz_protocol_decoder_flex_get_stats(instance->decoder, &stats);
+    return stats.frames_completed;
 }
