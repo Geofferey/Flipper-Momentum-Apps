@@ -12,6 +12,8 @@ typedef struct {
     uint32_t fiw_chase;
     uint32_t frames_completed;
     uint32_t pages_decoded;
+    /** Pages classified as secure or as opaque encrypted-looking text. */
+    uint32_t pages_encrypted;
     uint32_t pages_repaired;
     /** Data words checked by BCH, and how many were uncorrectable. */
     uint32_t words_total;

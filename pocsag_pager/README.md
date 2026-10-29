@@ -103,8 +103,10 @@ FLEX decoding features:
   network retransmits them (marked `R`).
 - Duplicates (same capcode and text within 5 minutes, ignoring a trailing
   `[NN]` counter) can be hidden.
-- Messages that look like encrypted payloads (FLEX secure pages, or one
-  unbroken base64 run) can be hidden.
+- Messages that look like encrypted payloads can be hidden. This includes
+  FLEX secure pages and long opaque Base64, Base64url, hexadecimal or mixed
+  printable tokens; a locally inserted `[...]` missing-fragment marker does
+  not let an otherwise matching payload evade the filter.
 
 ## Logging
 

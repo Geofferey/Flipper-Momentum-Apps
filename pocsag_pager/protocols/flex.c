@@ -44,7 +44,10 @@
 // each needing a slot; idle slots hold no text.
 #define FLEX_FRAGMENT_SLOTS      8U
 #define FLEX_FRAGMENT_TIMEOUT_MS (4U * 60U * 1000U)
-#define FLEX_ENCRYPTED_MIN_RUN   32U
+#define FLEX_ENCRYPTED_BASE64_RUN 28U
+#define FLEX_ENCRYPTED_HEX_RUN    32U
+#define FLEX_ENCRYPTED_GENERIC_RUN 40U
+#define FLEX_ENCRYPTED_MIN_UNIQUE  16U
 #define FLEX_JOINED_MAX_CHARS    1024U
 #define FLEX_GAP_MARK            "[...]"
 
@@ -692,33 +695,98 @@ static bool flex_seen_check(SubGhzProtocolDecoderFlex* instance, uint32_t hash) 
     return false;
 }
 
+static uint8_t flex_character_class(char c) {
+    if(c >= 'A' && c <= 'Z') return 1U;
+    if(c >= 'a' && c <= 'z') return 2U;
+    if(c >= '0' && c <= '9') return 4U;
+    return 8U;
+}
+
+static uint8_t flex_unique_characters(uint64_t low, uint64_t high) {
+    return (uint8_t)(__builtin_popcountll(low) + __builtin_popcountll(high));
+}
+
 /*
- * Encrypted payloads sent as alphanumeric text show up as one unbroken run of
- * base64 characters mixing upper case, lower case and digits, with nothing
- * else around it but a few markers. Plain text is broken up by spaces and
- * punctuation long before 32 characters.
+ * Networks also carry encrypted data in ordinary ALN pages. Detect common
+ * opaque encodings while remaining conservative around normal prose:
+ *
+ * - standard and URL-safe Base64 with mixed case and a digit or encoding mark;
+ * - long hexadecimal strings containing both digits and A-F;
+ * - long unbroken printable tokens with all four character classes and broad
+ *   character diversity (for Base85-like encodings).
+ *
+ * FLEX_GAP_MARK is generated locally for a missing fragment. Treat it as
+ * transparent so one damaged encrypted message does not become two short runs
+ * that evade the filter.
  */
 static bool flex_text_looks_encrypted(const char* text) {
     const size_t length = strlen(text);
-    size_t best = 0;
-    size_t run = 0;
-    uint8_t classes = 0;
+    size_t base64_run = 0;
+    size_t hex_run = 0;
+    size_t printable_run = 0;
+    uint8_t base64_classes = 0;
+    uint8_t hex_classes = 0;
+    uint8_t printable_classes = 0;
+    uint64_t printable_low = 0;
+    uint64_t printable_high = 0;
+
     for(size_t i = 0; i <= length; i++) {
-        const char c = text[i];
-        const bool base64 = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                            (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
-        if(base64) {
-            run++;
-            if(c >= 'A' && c <= 'Z') classes |= 1U;
-            if(c >= 'a' && c <= 'z') classes |= 2U;
-            if(c >= '0' && c <= '9') classes |= 4U;
+        if(i < length && i + sizeof(FLEX_GAP_MARK) - 1U <= length &&
+           !memcmp(text + i, FLEX_GAP_MARK, sizeof(FLEX_GAP_MARK) - 1U)) {
+            i += sizeof(FLEX_GAP_MARK) - 2U;
             continue;
         }
-        if(run >= FLEX_ENCRYPTED_MIN_RUN && classes == 7U && run > best) best = run;
-        run = 0;
-        classes = 0;
+
+        const char c = text[i];
+        const bool upper = c >= 'A' && c <= 'Z';
+        const bool lower = c >= 'a' && c <= 'z';
+        const bool digit = c >= '0' && c <= '9';
+        const bool base64 = upper || lower || digit || c == '+' || c == '/' || c == '=' ||
+                            c == '-' || c == '_';
+        if(base64) {
+            base64_run++;
+            base64_classes |= flex_character_class(c);
+        } else {
+            if(base64_run >= FLEX_ENCRYPTED_BASE64_RUN && (base64_classes & 3U) == 3U &&
+               (base64_classes & 12U)) {
+                return true;
+            }
+            base64_run = 0;
+            base64_classes = 0;
+        }
+
+        const bool hex = digit || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+        if(hex) {
+            hex_run++;
+            hex_classes |= digit ? 1U : 2U;
+        } else {
+            if(hex_run >= FLEX_ENCRYPTED_HEX_RUN && hex_classes == 3U) return true;
+            hex_run = 0;
+            hex_classes = 0;
+        }
+
+        if(c >= 0x21 && c <= 0x7E) {
+            printable_run++;
+            printable_classes |= flex_character_class(c);
+            const uint8_t index = (uint8_t)c - 0x21U;
+            if(index < 64U) {
+                printable_low |= 1ULL << index;
+            } else {
+                printable_high |= 1ULL << (index - 64U);
+            }
+        } else {
+            if(printable_run >= FLEX_ENCRYPTED_GENERIC_RUN && printable_classes == 15U &&
+               flex_unique_characters(printable_low, printable_high) >=
+                   FLEX_ENCRYPTED_MIN_UNIQUE) {
+                return true;
+            }
+            printable_run = 0;
+            printable_classes = 0;
+            printable_low = 0;
+            printable_high = 0;
+        }
     }
-    return best && length - best <= MAX(4U, length / 10U);
+    return false;
 }
 
 static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
@@ -730,6 +798,7 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
         instance->page_type == FlexPageTypeSecure ||
         (instance->page_type == FlexPageTypeAlphanumeric && !strncmp(message, "ALN: ", 5) &&
          flex_text_looks_encrypted(message + 5));
+    if(instance->page_encrypted) instance->stats.pages_encrypted++;
     instance->page_duplicate = flex_seen_check(instance, hash);
     // Not fully decoded: a failed header checksum, or a joined message missing
     // one or more fragments.
