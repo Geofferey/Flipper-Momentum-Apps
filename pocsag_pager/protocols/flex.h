@@ -33,6 +33,8 @@ typedef struct {
     uint32_t joined_complete;
     uint32_t joined_orphan;
     uint32_t joined_timeout;
+    /** Buffered joins emitted as partials when FLEX4 reception stopped. */
+    uint32_t joined_session_flush;
     /** Join hardening: rejected controls, sequence gaps, duplicates, and bad signatures. */
     uint32_t joined_checksum_rejected;
     uint32_t joined_sequence_gap;
@@ -84,6 +86,8 @@ typedef struct {
 
 /** Feed one 4-FSK hard-decision sample (CC1101 RX_HARD_DATA[1:0]). */
 void subghz_protocol_decoder_flex_feed_4fsk_sample(void* context, uint8_t hard_symbol);
+/** Emit and clear every buffered fragmented message as the best available partial. */
+void subghz_protocol_decoder_flex_flush_fragments(void* context);
 void subghz_protocol_decoder_flex_reset_stats(void* context);
 /** Describe the page most recently passed to the decoder callback. */
 void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* info);

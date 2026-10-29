@@ -203,7 +203,7 @@ static void flex_stats_file_write(
         "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu\n"
         "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu\n"
         "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu\n"
-        "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n\n",
+        "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n\n",
         instance->sample_count,
         (long)instance->freq_correction_ppm,
         instance->symbol_count[0],
@@ -241,6 +241,7 @@ static void flex_stats_file_write(
         stats->joined_complete,
         stats->joined_orphan,
         stats->joined_timeout,
+        stats->joined_session_flush,
         stats->joined_sequence_gap,
         stats->joined_duplicate,
         stats->joined_checksum_rejected,
@@ -402,13 +403,14 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.pages_parse_failed);
             FURI_LOG_I(
                 TAG,
-                "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu",
+                "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu",
                 decoder_stats.fragments_first,
                 decoder_stats.fragments_more,
                 decoder_stats.fragments_last,
                 decoder_stats.joined_complete,
                 decoder_stats.joined_orphan,
                 decoder_stats.joined_timeout,
+                decoder_stats.joined_session_flush,
                 decoder_stats.joined_sequence_gap,
                 decoder_stats.joined_duplicate,
                 decoder_stats.joined_checksum_rejected,
@@ -428,6 +430,10 @@ static int32_t flex_sampler_thread(void* context) {
         furi_hal_speaker_stop();
         furi_hal_speaker_release();
     }
+    // Do not silently discard a long message whose final fragment never
+    // arrived. This callback still runs on the sampler thread while history
+    // and logging are alive; the Partial Msgs setting controls only display.
+    subghz_protocol_decoder_flex_flush_fragments(instance->decoder);
     if(capture) {
         flex_capture_close(capture);
         free(capture);

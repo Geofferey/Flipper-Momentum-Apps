@@ -52,6 +52,9 @@
 #define FLEX_ENCRYPTED_MIN_UNIQUE    16U
 #define FLEX_JOINED_MAX_CHARS    1024U
 #define FLEX_GAP_MARK            "[...]"
+// Enough identities to cover a full-sized joined message when fragments are
+// normally filled, without retaining another copy of their text.
+#define FLEX_FRAGMENT_IDENTITIES 8U
 
 #define FLEX_PARTIAL_PAGES        4U
 #define FLEX_PARTIAL_TIMEOUT_MS   (10U * 60U * 1000U)
@@ -118,15 +121,15 @@ typedef struct {
     uint8_t next_fragment;
     uint8_t parts;
     uint8_t signature;
-    uint8_t last_fragment;
     bool signature_present;
-    bool last_continuation;
+    bool text_truncated;
     bool chase;
     bool repaired;
     bool suspect;
     uint32_t signature_sum;
-    uint32_t last_part_hash;
-    size_t last_part_length;
+    uint32_t part_identities[FLEX_FRAGMENT_IDENTITIES];
+    uint8_t identity_count;
+    uint8_t identity_next;
     // Phase and frame of the first part received, where the pager listens.
     char phase;
     uint8_t frame;
@@ -868,13 +871,18 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
     if(instance->base.callback) instance->base.callback(&instance->base, instance->base.context);
 }
 
+static void flex_fragment_append(FlexFragmentSlot* slot, const char* text);
+
 // Emit a joined message and free its slot. Its header shows the number of
 // parts and J; FLEX_GAP_MARK marks missing parts.
 static void flex_fragment_flush(
     SubGhzProtocolDecoderFlex* instance,
     FlexFragmentSlot* slot,
     bool incomplete) {
-    if(incomplete) furi_string_cat_str(slot->text, FLEX_GAP_MARK);
+    if(incomplete) {
+        slot->suspect = true;
+        flex_fragment_append(slot, FLEX_GAP_MARK);
+    }
     furi_string_set_str(instance->generic.result_msg, "ALN: ");
     furi_string_cat(instance->generic.result_msg, slot->text);
 
@@ -902,6 +910,69 @@ static void flex_fragment_flush_expired(SubGhzProtocolDecoderFlex* instance) {
             flex_fragment_flush(instance, slot, true);
         }
     }
+}
+
+void subghz_protocol_decoder_flex_flush_fragments(void* context) {
+    furi_assert(context);
+    SubGhzProtocolDecoderFlex* instance = context;
+    for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
+        FlexFragmentSlot* slot = &instance->fragments[i];
+        if(slot->used) {
+            instance->stats.joined_session_flush++;
+            flex_fragment_flush(instance, slot, true);
+        }
+    }
+}
+
+static uint32_t flex_fragment_identity(
+    uint32_t part_hash,
+    size_t part_length,
+    uint8_t fragment,
+    bool continuation,
+    uint8_t signature) {
+    uint32_t identity = part_hash ^ ((uint32_t)part_length * 0x9E3779B1UL);
+    identity ^= (uint32_t)fragment << 29;
+    identity ^= continuation ? 0xA5A5A5A5UL : 0x5A5A5A5AUL;
+    // The same opening text can introduce different messages. The first
+    // fragment's whole-message signature distinguishes those restarts.
+    if(fragment == 3U) identity ^= (uint32_t)signature * 0x01010101UL;
+    return identity;
+}
+
+static bool flex_fragment_identity_seen(const FlexFragmentSlot* slot, uint32_t identity) {
+    for(uint8_t i = 0; i < slot->identity_count; i++) {
+        if(slot->part_identities[i] == identity) return true;
+    }
+    return false;
+}
+
+static void flex_fragment_identity_remember(FlexFragmentSlot* slot, uint32_t identity) {
+    slot->part_identities[slot->identity_next] = identity;
+    slot->identity_next = (slot->identity_next + 1U) % FLEX_FRAGMENT_IDENTITIES;
+    if(slot->identity_count < FLEX_FRAGMENT_IDENTITIES) slot->identity_count++;
+}
+
+static void flex_fragment_append(FlexFragmentSlot* slot, const char* text) {
+    if(slot->text_truncated) return;
+
+    const size_t used = furi_string_size(slot->text);
+    const size_t length = strlen(text);
+    if(used + length <= FLEX_JOINED_MAX_CHARS) {
+        furi_string_cat_str(slot->text, text);
+        return;
+    }
+
+    // Keep the payload, including the marker, inside the advertised limit.
+    const size_t room = FLEX_JOINED_MAX_CHARS > used ? FLEX_JOINED_MAX_CHARS - used : 0U;
+    const size_t mark_length = sizeof(FLEX_TRUNCATION_MARK) - 1U;
+    const size_t text_room = room > mark_length ? room - mark_length : 0U;
+    const size_t mark_room = room - text_room;
+    if(text_room) furi_string_cat_printf(slot->text, "%.*s", (int)text_room, text);
+    if(mark_room) {
+        furi_string_cat_printf(
+            slot->text, "%.*s", (int)MIN(mark_room, mark_length), FLEX_TRUNCATION_MARK);
+    }
+    slot->text_truncated = true;
 }
 
 /*
@@ -941,14 +1012,20 @@ static void flex_fragment_add(
         }
     }
 
-    const uint32_t part_hash = flex_text_hash(capcode, type, text);
-    const size_t part_length = strlen(text);
+    const uint32_t part_identity = flex_fragment_identity(
+        flex_text_hash(capcode, type, text),
+        strlen(text),
+        fragment,
+        continuation,
+        instance->alpha_signature);
 
-    // A retransmitted copy of the most recently accepted fragment must not
-    // look like a missing fragment and add a false gap to the message.
-    if(slot && slot->last_fragment == fragment &&
-       slot->last_continuation == continuation && slot->last_part_hash == part_hash &&
-       slot->last_part_length == part_length) {
+    // Retransmissions can restart from the first fragment or repeat an older
+    // piece, not only the immediately previous one. Ignore an exact piece
+    // that is out of sequence and retain the more complete assembly. When a
+    // modulo-3 fragment number is expected, accept it even if its text happens
+    // to match an earlier cycle.
+    if(slot && fragment != slot->next_fragment &&
+       flex_fragment_identity_seen(slot, part_identity)) {
         slot->chase = slot->chase || chase_used;
         slot->repaired = slot->repaired || repaired_used;
         slot->suspect = slot->suspect || suspect_used;
@@ -999,7 +1076,7 @@ static void flex_fragment_add(
         slot->frame = instance->frame;
         // A later fragment without its start: the beginning is missing.
         if(fragment != 3U) {
-            furi_string_set_str(slot->text, FLEX_GAP_MARK);
+            flex_fragment_append(slot, FLEX_GAP_MARK);
             instance->stats.joined_orphan++;
         }
     } else {
@@ -1007,30 +1084,20 @@ static void flex_fragment_add(
         slot->repaired = slot->repaired || repaired_used;
         slot->suspect = slot->suspect || suspect_used;
         if(fragment != slot->next_fragment) {
-            furi_string_cat_str(slot->text, FLEX_GAP_MARK);
+            flex_fragment_append(slot, FLEX_GAP_MARK);
             instance->stats.joined_sequence_gap++;
         }
     }
 
-    if(furi_string_size(slot->text) + strlen(text) > FLEX_JOINED_MAX_CHARS) {
-        const size_t room = FLEX_JOINED_MAX_CHARS > furi_string_size(slot->text) ?
-                                FLEX_JOINED_MAX_CHARS - furi_string_size(slot->text) :
-                                0U;
-        furi_string_cat_printf(slot->text, "%.*s" FLEX_TRUNCATION_MARK, (int)room, text);
-    } else {
-        furi_string_cat_str(slot->text, text);
-    }
+    flex_fragment_append(slot, text);
     slot->parts++;
     if(fragment == 3U) {
         slot->signature = instance->alpha_signature;
         slot->signature_present = true;
     }
     slot->signature_sum += instance->alpha_signature_sum;
+    flex_fragment_identity_remember(slot, part_identity);
     slot->next_fragment = fragment == 3U ? 0U : (fragment + 1U) % 3U;
-    slot->last_fragment = fragment;
-    slot->last_continuation = continuation;
-    slot->last_part_hash = part_hash;
-    slot->last_part_length = part_length;
     slot->tick = furi_get_tick();
 
     if(!continuation) {
