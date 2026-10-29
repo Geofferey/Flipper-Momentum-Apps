@@ -15,43 +15,38 @@
  *
  *   HH:MM:SS <TAB> frequency <TAB> protocol <TAB> header <TAB> message
  *
- * with the fields escaped by pcsg_block_generic_escape(). RAM only keeps a
- * ring of recent entries: where each line is in the file and a short label
- * for the list, so the list can grow far beyond what full messages in RAM
- * would allow.
+ * with the fields escaped by pcsg_block_generic_escape(). A separate hidden
+ * index contains one compact record for each entry admitted to the viewer.
+ * It is only needed during the live session and contains no message text.
  */
-// The index is a FIFO deque of fixed-size blocks: a block is allocated as the
-// newest fills and freed as the oldest empties, so RAM tracks the live window
-// and no single allocation is large. An idle receiver costs nothing.
-#define PCSG_HISTORY_BLOCK_ITEMS 50U
+#define PCSG_HISTORY_INDEX_PATH       EXT_PATH("pocsag/.session.idx")
+#define PCSG_HISTORY_LABEL_CACHE_SIZE 4U
 
 typedef struct {
     uint32_t offset;
     uint16_t length;
     uint8_t type;
-    char label[PCSG_HISTORY_LABEL_SIZE];
+    uint8_t reserved;
 } PCSGHistoryItem;
 
-typedef struct PCSGHistoryBlock {
-    struct PCSGHistoryBlock* next;
-    PCSGHistoryItem items[PCSG_HISTORY_BLOCK_ITEMS];
-} PCSGHistoryBlock;
+typedef struct {
+    bool valid;
+    uint16_t idx;
+    uint8_t type;
+    char label[PCSG_HISTORY_LABEL_SIZE];
+} PCSGHistoryLabel;
 
 struct PCSGHistory {
     FuriMutex* mutex;
-    // Oldest entries live in head_block from head_offset; newest fill tail_block
-    // up to tail_fill. Both NULL when empty.
-    PCSGHistoryBlock* head_block;
-    PCSGHistoryBlock* tail_block;
-    uint16_t head_offset;
-    uint16_t tail_fill;
     uint16_t count;
     uint16_t last_evicted;
     uint32_t total;
 
     Storage* storage;
     File* file;
+    File* index_file;
     bool file_open;
+    bool index_open;
     uint32_t file_size;
     // Temp mode: one hidden file, overwritten each session and destroyed on
     // exit, instead of a kept log per session.
@@ -62,68 +57,21 @@ struct PCSGHistory {
     FuriString* ric;
     FuriString* message;
     FuriString* line;
+    // Dynamically allocated four-row viewport cache. Session length does not
+    // affect its size.
+    PCSGHistoryLabel* labels;
+    uint8_t label_next;
 };
 
-// Live item at list index idx (0 = oldest), or NULL if out of range.
-static PCSGHistoryItem* pcsg_history_item(PCSGHistory* instance, uint16_t idx) {
-    if(idx >= instance->count) return NULL;
-    uint16_t position = instance->head_offset + idx;
-    PCSGHistoryBlock* block = instance->head_block;
-    while(position >= PCSG_HISTORY_BLOCK_ITEMS && block) {
-        position -= PCSG_HISTORY_BLOCK_ITEMS;
-        block = block->next;
-    }
-    return block ? &block->items[position] : NULL;
-}
-
-static void pcsg_history_free_blocks(PCSGHistory* instance) {
-    PCSGHistoryBlock* block = instance->head_block;
-    while(block) {
-        PCSGHistoryBlock* next = block->next;
-        free(block);
-        block = next;
-    }
-    instance->head_block = NULL;
-    instance->tail_block = NULL;
-    instance->head_offset = 0;
-    instance->tail_fill = 0;
-}
-
-// Drop the oldest item, freeing the head block once it empties. The entry
-// stays in the SD log; only the viewable window shrinks.
-static void pcsg_history_evict_oldest(PCSGHistory* instance) {
-    if(instance->count == 0) return;
-    instance->head_offset++;
-    instance->count--;
-    if(instance->count == 0) {
-        pcsg_history_free_blocks(instance);
-    } else if(instance->head_offset >= PCSG_HISTORY_BLOCK_ITEMS) {
-        PCSGHistoryBlock* old = instance->head_block;
-        instance->head_block = old->next;
-        instance->head_offset = 0;
-        free(old);
-    }
-}
-
-// Append a slot for a new newest item, growing the deque by a block as needed.
-// Returns NULL if a new block is needed but cannot be allocated.
-static PCSGHistoryItem* pcsg_history_append_slot(PCSGHistory* instance) {
-    if(!instance->tail_block || instance->tail_fill >= PCSG_HISTORY_BLOCK_ITEMS) {
-        PCSGHistoryBlock* block = calloc(1, sizeof(PCSGHistoryBlock));
-        if(!block) return NULL;
-        if(instance->tail_block) {
-            instance->tail_block->next = block;
-        } else {
-            instance->head_block = block;
-            instance->head_offset = 0;
-        }
-        instance->tail_block = block;
-        instance->tail_fill = 0;
-    }
-    PCSGHistoryItem* item = &instance->tail_block->items[instance->tail_fill];
-    instance->tail_fill++;
-    instance->count++;
-    return item;
+static bool pcsg_history_read_item(
+    PCSGHistory* instance,
+    uint16_t idx,
+    PCSGHistoryItem* item) {
+    if(idx >= instance->count || !instance->index_open) return false;
+    const uint32_t offset = (uint32_t)idx * sizeof(PCSGHistoryItem);
+    return storage_file_seek(instance->index_file, offset, true) &&
+           storage_file_read(instance->index_file, item, sizeof(PCSGHistoryItem)) ==
+               sizeof(PCSGHistoryItem);
 }
 
 static void pcsg_history_close_log(PCSGHistory* instance) {
@@ -131,6 +79,11 @@ static void pcsg_history_close_log(PCSGHistory* instance) {
         storage_file_close(instance->file);
         instance->file_open = false;
     }
+    if(instance->index_open) {
+        storage_file_close(instance->index_file);
+        instance->index_open = false;
+    }
+    storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
 }
 
 /*
@@ -185,14 +138,22 @@ static bool pcsg_history_open_log(PCSGHistory* instance, uint32_t frequency) {
     }
     instance->file_open = storage_file_open(
         instance->file, furi_string_get_cstr(path), FSAM_READ_WRITE, FSOM_CREATE_ALWAYS);
-    if(instance->file_open) {
+    storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
+    instance->index_open = storage_file_open(
+        instance->index_file, PCSG_HISTORY_INDEX_PATH, FSAM_READ_WRITE, FSOM_CREATE_ALWAYS);
+    if(instance->file_open && instance->index_open) {
         instance->file_size = 0;
         FURI_LOG_I(TAG, "Logging to %s", furi_string_get_cstr(path));
     } else {
         FURI_LOG_E(TAG, "Unable to open %s", furi_string_get_cstr(path));
+        if(instance->file_open) storage_file_close(instance->file);
+        if(instance->index_open) storage_file_close(instance->index_file);
+        instance->file_open = false;
+        instance->index_open = false;
+        storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
     }
     furi_string_free(path);
-    return instance->file_open;
+    return instance->file_open && instance->index_open;
 }
 
 // One line for the list: the header without its first-line tag (the FLEX
@@ -212,6 +173,43 @@ void pcsg_history_make_label(char* label, size_t size, const char* ric, const ch
         }
         for(; *text && length + 1 < size; text++) {
             char c = *text;
+            if(c == '\e' || c == '#') continue;
+            if(c == '\n' || c == '\r' || c == '\t') c = ' ';
+            if(c == ' ' && (length == 0 || label[length - 1] == ' ')) continue;
+            label[length++] = c;
+        }
+    }
+    label[length] = '\0';
+}
+
+// Build the same label directly from escaped log fields without allocating
+// complete unescaped copies of the header and message.
+static void pcsg_history_make_label_escaped(
+    char* label,
+    size_t size,
+    const char* ric,
+    const char* message) {
+    furi_assert(size);
+    const char* newline = strstr(ric, "\\n");
+    if(newline && newline[2]) ric = newline + 2;
+    if(!strncmp(ric, "\\e#CAP: ", 8)) {
+        ric += 8;
+        while(*ric == '0' && ric[1] >= '0' && ric[1] <= '9') ric++;
+    }
+
+    size_t length = 0;
+    const char* parts[] = {ric, message};
+    for(size_t part = 0; part < COUNT_OF(parts); part++) {
+        const char* text = parts[part];
+        while(*text && length + 1U < size) {
+            char c = *text++;
+            if(c == '\\' && *text) {
+                c = *text++;
+                if(c == 'n') c = '\n';
+                else if(c == 'r') c = '\r';
+                else if(c == 't') c = '\t';
+                else if(c == 'e') c = '\e';
+            }
             if(c == '\e' || c == '#') continue;
             if(c == '\n' || c == '\r' || c == '\t') c = ' ';
             if(c == ' ' && (length == 0 || label[length - 1] == ' ')) continue;
@@ -247,12 +245,15 @@ PCSGHistory* pcsg_history_alloc(void) {
     instance->storage = furi_record_open(RECORD_STORAGE);
     // A temp file left by a crash or power loss is destroyed at the next start.
     pcsg_history_destroy_temp(instance->storage);
+    storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
     instance->file = storage_file_alloc(instance->storage);
+    instance->index_file = storage_file_alloc(instance->storage);
     instance->scratch = flipper_format_string_alloc();
     instance->protocol = furi_string_alloc();
     instance->ric = furi_string_alloc();
     instance->message = furi_string_alloc();
     instance->line = furi_string_alloc();
+    instance->labels = calloc(PCSG_HISTORY_LABEL_CACHE_SIZE, sizeof(PCSGHistoryLabel));
     return instance;
 }
 
@@ -260,14 +261,15 @@ void pcsg_history_free(PCSGHistory* instance) {
     furi_assert(instance);
     pcsg_history_close_log(instance);
     pcsg_history_destroy_temp(instance->storage);
-    pcsg_history_free_blocks(instance);
     storage_file_free(instance->file);
+    storage_file_free(instance->index_file);
     furi_record_close(RECORD_STORAGE);
     flipper_format_free(instance->scratch);
     furi_string_free(instance->protocol);
     furi_string_free(instance->ric);
     furi_string_free(instance->message);
     furi_string_free(instance->line);
+    free(instance->labels);
     furi_mutex_free(instance->mutex);
     free(instance);
 }
@@ -281,10 +283,12 @@ void pcsg_history_reset(PCSGHistory* instance) {
     furi_assert(instance);
     furi_mutex_acquire(instance->mutex, FuriWaitForever);
     pcsg_history_close_log(instance);
-    pcsg_history_free_blocks(instance);
     instance->count = 0;
     instance->total = 0;
     instance->last_evicted = 0;
+    instance->label_next = 0;
+    memset(
+        instance->labels, 0, PCSG_HISTORY_LABEL_CACHE_SIZE * sizeof(PCSGHistoryLabel));
     furi_mutex_release(instance->mutex);
 }
 
@@ -300,18 +304,65 @@ uint16_t pcsg_history_last_evicted(PCSGHistory* instance) {
 
 uint8_t pcsg_history_get_type_protocol(PCSGHistory* instance, uint16_t idx) {
     furi_assert(instance);
-    const PCSGHistoryItem* item = pcsg_history_item(instance, idx);
-    return item ? item->type : 0;
+    uint8_t type = 0;
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+    for(size_t i = 0; i < PCSG_HISTORY_LABEL_CACHE_SIZE; i++) {
+        if(instance->labels[i].valid && instance->labels[i].idx == idx) {
+            type = instance->labels[i].type;
+            break;
+        }
+    }
+    if(!type) {
+        PCSGHistoryItem item;
+        if(pcsg_history_read_item(instance, idx, &item)) type = item.type;
+    }
+    furi_mutex_release(instance->mutex);
+    return type;
 }
 
 void pcsg_history_get_text_item_menu(PCSGHistory* instance, FuriString* output, uint16_t idx) {
     furi_assert(instance);
     furi_mutex_acquire(instance->mutex, FuriWaitForever);
-    if(idx < instance->count) {
-        furi_string_set_str(output, pcsg_history_item(instance, idx)->label);
-    } else {
-        furi_string_reset(output);
+    PCSGHistoryLabel* cached = NULL;
+    for(size_t i = 0; i < PCSG_HISTORY_LABEL_CACHE_SIZE; i++) {
+        if(instance->labels[i].valid && instance->labels[i].idx == idx) {
+            cached = &instance->labels[i];
+            break;
+        }
     }
+
+    if(!cached) {
+        PCSGHistoryItem item;
+        if(pcsg_history_read_item(instance, idx, &item)) {
+            PCSGHistoryLabel* slot = &instance->labels[instance->label_next];
+            instance->label_next =
+                (instance->label_next + 1U) % PCSG_HISTORY_LABEL_CACHE_SIZE;
+            slot->valid = true;
+            slot->idx = idx;
+            slot->type = item.type;
+            slot->label[0] = '\0';
+
+            char* buffer = malloc(item.length + 1U);
+            if(buffer) {
+                const bool read = storage_file_seek(instance->file, item.offset, true) &&
+                                  storage_file_read(instance->file, buffer, item.length) ==
+                                      item.length;
+                buffer[read ? item.length : 0] = '\0';
+                char* fields[PCSGLogFieldCount];
+                if(read && pcsg_history_split_line(buffer, fields)) {
+                    pcsg_history_make_label_escaped(
+                        slot->label,
+                        sizeof(slot->label),
+                        fields[PCSGLogFieldRic],
+                        fields[PCSGLogFieldMessage]);
+                }
+                free(buffer);
+            }
+            cached = slot;
+        }
+    }
+    if(cached) furi_string_set_str(output, cached->label);
+    else furi_string_reset(output);
     furi_mutex_release(instance->mutex);
 }
 
@@ -328,13 +379,15 @@ FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx) {
     furi_mutex_acquire(instance->mutex, FuriWaitForever);
 
     do {
-        if(idx >= instance->count || !instance->file_open) break;
-        const PCSGHistoryItem* item = pcsg_history_item(instance, idx);
+        if(!instance->file_open) break;
+        PCSGHistoryItem item;
+        if(!pcsg_history_read_item(instance, idx, &item)) break;
 
-        char* buffer = malloc(item->length + 1U);
-        const bool read = storage_file_seek(instance->file, item->offset, true) &&
-                          storage_file_read(instance->file, buffer, item->length) == item->length;
-        buffer[read ? item->length : 0] = '\0';
+        char* buffer = malloc(item.length + 1U);
+        if(!buffer) break;
+        const bool read = storage_file_seek(instance->file, item.offset, true) &&
+                          storage_file_read(instance->file, buffer, item.length) == item.length;
+        buffer[read ? item.length : 0] = '\0';
 
         char* fields[PCSGLogFieldCount];
         if(read && pcsg_history_split_line(buffer, fields)) {
@@ -381,21 +434,22 @@ bool pcsg_history_get_address(
     *address = 0;
 
     bool result = false;
-    FuriString* ric = furi_string_alloc();
     furi_mutex_acquire(instance->mutex, FuriWaitForever);
 
     do {
-        if(idx >= instance->count || !instance->file_open) break;
-        const PCSGHistoryItem* item = pcsg_history_item(instance, idx);
-        char* buffer = malloc(item->length + 1U);
-        const bool read = storage_file_seek(instance->file, item->offset, true) &&
-                          storage_file_read(instance->file, buffer, item->length) == item->length;
-        buffer[read ? item->length : 0] = '\0';
+        if(!instance->file_open) break;
+        PCSGHistoryItem item;
+        if(!pcsg_history_read_item(instance, idx, &item)) break;
+        char* buffer = malloc(item.length + 1U);
+        if(!buffer) break;
+        const bool read = storage_file_seek(instance->file, item.offset, true) &&
+                          storage_file_read(instance->file, buffer, item.length) == item.length;
+        buffer[read ? item.length : 0] = '\0';
 
         char* fields[PCSGLogFieldCount];
         if(read && pcsg_history_split_line(buffer, fields)) {
-            pcsg_block_generic_unescape(ric, fields[PCSGLogFieldRic]);
-            const char* header = furi_string_get_cstr(ric);
+            pcsg_block_generic_unescape(instance->ric, fields[PCSGLogFieldRic]);
+            const char* header = furi_string_get_cstr(instance->ric);
             if(!strcmp(fields[PCSGLogFieldProtocol], "FLEX")) {
                 result = pcsg_history_parse_address(header, "CAP: ", address);
                 if(result) *type = PCSGHistoryAddressFlexCap;
@@ -408,7 +462,6 @@ bool pcsg_history_get_address(
     } while(false);
 
     furi_mutex_release(instance->mutex);
-    furi_string_free(ric);
     return result;
 }
 
@@ -478,43 +531,42 @@ PCSGHistoryStateAddKey
             break;
         }
 
-        // Roll the oldest entries off the viewable window while free heap is
-        // tight, keeping at least PCSG_HISTORY_MIN_ITEMS. They stay in the log.
-        while(instance->count > PCSG_HISTORY_MIN_ITEMS &&
-              memmgr_get_free_heap() < PCSG_HISTORY_HEAP_RESERVE) {
-            pcsg_history_evict_oldest(instance);
-            instance->last_evicted++;
-        }
-
-        PCSGHistoryItem* item = pcsg_history_append_slot(instance);
-        while(!item && instance->count > 0) {
-            // Under severe pressure a new block will not allocate; free one by
-            // dropping the oldest, then retry.
-            pcsg_history_evict_oldest(instance);
-            instance->last_evicted++;
-            item = pcsg_history_append_slot(instance);
-        }
-        if(!item) {
-            // Nothing could be stored in RAM, but the entry is in the SD log.
+        if(instance->count == UINT16_MAX) {
+            // The log remains complete, but the UI's 16-bit list cannot grow
+            // beyond this point.
             state = PCSGHistoryStateAddKeyOverflow;
             break;
         }
-        item->offset = instance->file_size - (length + 1U);
-        item->length = length;
-        item->type = decoder_base->protocol->type;
 
-        FuriString* ric = furi_string_alloc();
-        FuriString* message = furi_string_alloc();
-        pcsg_block_generic_unescape(ric, furi_string_get_cstr(instance->ric));
-        pcsg_block_generic_unescape(message, furi_string_get_cstr(instance->message));
-        pcsg_history_make_label(
-            item->label,
-            sizeof(item->label),
-            furi_string_get_cstr(ric),
-            furi_string_get_cstr(message));
-        furi_string_free(ric);
-        furi_string_free(message);
+        PCSGHistoryItem item = {
+            .offset = instance->file_size - (length + 1U),
+            .length = length,
+            .type = decoder_base->protocol->type,
+            .reserved = 0,
+        };
+        const uint32_t index_offset = (uint32_t)instance->count * sizeof(PCSGHistoryItem);
+        const bool indexed = storage_file_seek(instance->index_file, index_offset, true) &&
+                             storage_file_write(
+                                 instance->index_file, &item, sizeof(PCSGHistoryItem)) ==
+                                 sizeof(PCSGHistoryItem);
+        if(!indexed) {
+            FURI_LOG_E(TAG, "Index write error");
+            state = PCSGHistoryStateAddKeyOverflow;
+            break;
+        }
 
+        PCSGHistoryLabel* slot = &instance->labels[instance->label_next];
+        instance->label_next = (instance->label_next + 1U) % PCSG_HISTORY_LABEL_CACHE_SIZE;
+        slot->valid = true;
+        slot->idx = instance->count;
+        slot->type = item.type;
+        pcsg_history_make_label_escaped(
+            slot->label,
+            sizeof(slot->label),
+            furi_string_get_cstr(instance->ric),
+            furi_string_get_cstr(instance->message));
+
+        instance->count++;
         state = PCSGHistoryStateAddKeyNewDada;
     } while(false);
     furi_mutex_release(instance->mutex);

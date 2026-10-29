@@ -17,8 +17,6 @@ struct PCSGReceiverInfo {
 };
 
 typedef struct {
-    FuriString* protocol_name;
-    PCSGBlockGeneric* generic;
     // Header and message as plain text, word-wrapped when drawn.
     FuriString* text;
     uint16_t scroll;
@@ -44,18 +42,23 @@ void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, Flippe
         pcsg_receiver_info->view,
         PCSGReceiverInfoModel * model,
         {
-            flipper_format_rewind(fff);
-            flipper_format_read_string(fff, "Protocol", model->protocol_name);
-
+            if(!model->text) model->text = furi_string_alloc();
             furi_string_reset(model->text);
-            if(pcsg_block_generic_deserialize(model->generic, fff) == SubGhzProtocolStatusOk) {
-                pcsg_view_receiver_info_append_plain(
-                    model->text, furi_string_get_cstr(model->generic->result_ric));
+            FuriString* raw = furi_string_alloc();
+            FuriString* decoded = furi_string_alloc();
+            if(flipper_format_rewind(fff) && flipper_format_read_string(fff, "Ric", raw)) {
+                pcsg_block_generic_unescape(decoded, furi_string_get_cstr(raw));
+                pcsg_view_receiver_info_append_plain(model->text, furi_string_get_cstr(decoded));
                 furi_string_trim(model->text, "\n");
                 furi_string_push_back(model->text, '\n');
-                pcsg_view_receiver_info_append_plain(
-                    model->text, furi_string_get_cstr(model->generic->result_msg));
+                if(flipper_format_read_string(fff, "Message", raw)) {
+                    pcsg_block_generic_unescape(decoded, furi_string_get_cstr(raw));
+                    pcsg_view_receiver_info_append_plain(
+                        model->text, furi_string_get_cstr(decoded));
+                }
             }
+            furi_string_free(raw);
+            furi_string_free(decoded);
             model->scroll = 0;
             model->lines = 0;
         },
@@ -160,8 +163,13 @@ void pcsg_view_receiver_info_exit(void* context) {
         pcsg_receiver_info->view,
         PCSGReceiverInfoModel * model,
         {
-            furi_string_reset(model->protocol_name);
-            furi_string_reset(model->text);
+            // A long page can grow several strings to its full size. Free the
+            // backing buffers when leaving instead of retaining that peak for
+            // the rest of the receive session.
+            if(model->text) {
+                furi_string_free(model->text);
+                model->text = NULL;
+            }
             model->scroll = 0;
             model->lines = 0;
         },
@@ -187,9 +195,6 @@ PCSGReceiverInfo* pcsg_view_receiver_info_alloc() {
         pcsg_receiver_info->view,
         PCSGReceiverInfoModel * model,
         {
-            // Ric and Message strings are created by the first deserialize.
-            model->generic = calloc(1, sizeof(PCSGBlockGeneric));
-            model->protocol_name = furi_string_alloc();
             model->text = furi_string_alloc();
         },
         true);
@@ -204,11 +209,7 @@ void pcsg_view_receiver_info_free(PCSGReceiverInfo* pcsg_receiver_info) {
         pcsg_receiver_info->view,
         PCSGReceiverInfoModel * model,
         {
-            furi_string_free(model->protocol_name);
-            furi_string_free(model->text);
-            if(model->generic->result_ric) furi_string_free(model->generic->result_ric);
-            if(model->generic->result_msg) furi_string_free(model->generic->result_msg);
-            free(model->generic);
+            if(model->text) furi_string_free(model->text);
         },
         false);
 
