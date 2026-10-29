@@ -82,9 +82,9 @@ SubGhzProtocolStatus pcsg_block_generic_serialize(
     FlipperFormat* flipper_format,
     SubGhzRadioPreset* preset) {
     furi_assert(instance);
+    furi_assert(instance->serialize_scratch);
     SubGhzProtocolStatus res = SubGhzProtocolStatusError;
-    FuriString* temp_str;
-    temp_str = furi_string_alloc();
+    FuriString* temp_str = instance->serialize_scratch;
     do {
         if(furi_string_size(instance->result_ric) > PCSG_GENERIC_MAX_FIELD_LENGTH ||
            furi_string_size(instance->result_msg) > PCSG_GENERIC_MAX_FIELD_LENGTH) {
@@ -141,7 +141,7 @@ SubGhzProtocolStatus pcsg_block_generic_serialize(
 
         res = SubGhzProtocolStatusOk;
     } while(false);
-    furi_string_free(temp_str);
+    furi_string_reset(temp_str);
     return res;
 }
 

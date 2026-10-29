@@ -21,6 +21,8 @@ struct PCSGBlockGeneric {
     const char* protocol_name;
     FuriString* result_ric;
     FuriString* result_msg;
+    /** Reused by serialization to avoid per-page heap allocation churn. */
+    FuriString* serialize_scratch;
 };
 
 /**

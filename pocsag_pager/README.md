@@ -149,7 +149,9 @@ message, including duplicates, encrypted payloads and partial pages.
 The debug **Stats Log** option writes counter-only FLEX4 snapshots to
 `/ext/pocsag/stats.txt` every 30 seconds and on normal exit, overwriting the
 file when the next enabled session starts. It records no capcodes or message
-text and can be used while the pager is unplugged.
+text and can be used while the pager is unplugged. Each snapshot also records
+current free heap, the session minimum, and the largest contiguous free block
+as `heap free/min/block` so exhaustion and fragmentation can be distinguished.
 
 Logs can contain other people's personal information; see the
 [Disclaimer](#disclaimer).

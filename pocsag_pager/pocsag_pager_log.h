@@ -31,3 +31,6 @@ void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label);
 
 /** Protocol/Ric/Message for the info view, valid until the next call. */
 FlipperFormat* pcsg_log_get_entry(PCSGLog* instance, uint16_t idx);
+
+/** Free the message-sized buffer used by the review info view. */
+void pcsg_log_release_view_data(PCSGLog* instance);

@@ -1,7 +1,6 @@
 #include "pocsag_pager_receiver.h"
 #include "../pocsag_pager_app_i.h"
 #include "pocsag_pager_icons.h"
-#include "../protocols/pcsg_generic.h"
 #include <input/input.h>
 #include <gui/elements.h>
 
@@ -23,14 +22,36 @@ typedef struct {
     uint16_t lines;
 } PCSGReceiverInfoModel;
 
-// Append text without the ESC "#" bold markers used in list headers.
-static void pcsg_view_receiver_info_append_plain(FuriString* output, const char* text) {
+// Append escaped log text directly without the ESC "#" bold markers used in
+// list headers. This avoids a second full-message temporary string.
+static void pcsg_view_receiver_info_append_unescaped(FuriString* output, const char* text) {
     for(; *text; text++) {
-        if(*text == '\e') {
+        char value = *text;
+        if(value == '\\' && text[1]) {
+            text++;
+            switch(*text) {
+            case 'n':
+                value = '\n';
+                break;
+            case 'r':
+                value = '\r';
+                break;
+            case 't':
+                value = '\t';
+                break;
+            case 'e':
+                value = '\e';
+                break;
+            default:
+                value = *text;
+                break;
+            }
+        }
+        if(value == '\e') {
             if(text[1] == '#') text++;
             continue;
         }
-        furi_string_push_back(output, *text);
+        furi_string_push_back(output, value);
     }
 }
 
@@ -45,20 +66,17 @@ void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, Flippe
             if(!model->text) model->text = furi_string_alloc();
             furi_string_reset(model->text);
             FuriString* raw = furi_string_alloc();
-            FuriString* decoded = furi_string_alloc();
             if(flipper_format_rewind(fff) && flipper_format_read_string(fff, "Ric", raw)) {
-                pcsg_block_generic_unescape(decoded, furi_string_get_cstr(raw));
-                pcsg_view_receiver_info_append_plain(model->text, furi_string_get_cstr(decoded));
+                pcsg_view_receiver_info_append_unescaped(
+                    model->text, furi_string_get_cstr(raw));
                 furi_string_trim(model->text, "\n");
                 furi_string_push_back(model->text, '\n');
                 if(flipper_format_read_string(fff, "Message", raw)) {
-                    pcsg_block_generic_unescape(decoded, furi_string_get_cstr(raw));
-                    pcsg_view_receiver_info_append_plain(
-                        model->text, furi_string_get_cstr(decoded));
+                    pcsg_view_receiver_info_append_unescaped(
+                        model->text, furi_string_get_cstr(raw));
                 }
             }
             furi_string_free(raw);
-            furi_string_free(decoded);
             model->scroll = 0;
             model->lines = 0;
         },

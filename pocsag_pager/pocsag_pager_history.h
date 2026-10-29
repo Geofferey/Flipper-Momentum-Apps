@@ -112,13 +112,8 @@ uint8_t pcsg_history_get_type_protocol(PCSGHistory* instance, uint16_t idx);
  */
 void pcsg_history_get_text_item_menu(PCSGHistory* instance, FuriString* output, uint16_t idx);
 
-/** Get status bar text for the history
- *
- * @param instance  - PCSGHistory instance
- * @param output    - FuriString* output
- * @return bool - is FULL; always false, the list rolls over instead
- */
-bool pcsg_history_get_text_space_left(PCSGHistory* instance, FuriString* output);
+/** Number of decoded entries written to this session log, including hidden ones. */
+uint32_t pcsg_history_get_total(PCSGHistory* instance);
 
 /** Append a protocol to the log file and optionally add it to the viewer.
  *
@@ -143,6 +138,9 @@ PCSGHistoryStateAddKey
  *         call, or NULL if the log could not be read
  */
 FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx);
+
+/** Free the message-sized buffer used by the live info view. */
+void pcsg_history_release_view_data(PCSGHistory* instance);
 
 /** Read the FLEX CAP or POCSAG RIC from a viewable history entry. */
 bool pcsg_history_get_address(

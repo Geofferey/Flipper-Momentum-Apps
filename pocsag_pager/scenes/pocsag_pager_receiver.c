@@ -184,30 +184,31 @@ static const NotificationSequence* pocsag_pager_scene_receiver_alert(POCSAGPager
 
 static void pocsag_pager_scene_receiver_update_statusbar(void* context) {
     POCSAGPagerApp* app = context;
-    FuriString* history_stat_str;
-    history_stat_str = furi_string_alloc();
-    if(!pcsg_history_get_text_space_left(app->txrx->history, history_stat_str)) {
-        FuriString* frequency_str;
-        FuriString* modulation_str;
+    char frequency[12];
+    char history[12];
+    snprintf(
+        frequency,
+        sizeof(frequency),
+        "%03lu.%02lu",
+        app->txrx->preset->frequency / 1000000UL % 1000UL,
+        app->txrx->preset->frequency / 10000UL % 100UL);
+    snprintf(history, sizeof(history), "%lu", pcsg_history_get_total(app->txrx->history));
 
-        frequency_str = furi_string_alloc();
-        modulation_str = furi_string_alloc();
-
-        pcsg_get_frequency_modulation(app, frequency_str, modulation_str);
-
-        pcsg_view_receiver_add_data_statusbar(
-            app->pcsg_receiver,
-            furi_string_get_cstr(frequency_str),
-            furi_string_get_cstr(modulation_str),
-            furi_string_get_cstr(history_stat_str));
-
-        furi_string_free(frequency_str);
-        furi_string_free(modulation_str);
+    const char* preset_name = furi_string_get_cstr(app->txrx->preset->name);
+    const char* modulation;
+    if(pcsg_preset_is_flex4(preset_name)) {
+        modulation = "F4";
+    } else if(!strncmp(preset_name, "FLEX", 4)) {
+        modulation = "FX";
+    } else if(!strcmp(preset_name, "POCSAG-W")) {
+        modulation = "PW";
     } else {
-        pcsg_view_receiver_add_data_statusbar(
-            app->pcsg_receiver, furi_string_get_cstr(history_stat_str), "", "");
+        modulation = preset_name;
     }
-    furi_string_free(history_stat_str);
+    char modulation_short[3] = {
+        modulation[0], modulation[0] && modulation[1] ? modulation[1] : '\0', '\0'};
+    pcsg_view_receiver_add_data_statusbar(
+        app->pcsg_receiver, frequency, modulation_short, history);
 }
 
 void pocsag_pager_scene_receiver_callback(PCSGCustomEvent event, void* context) {

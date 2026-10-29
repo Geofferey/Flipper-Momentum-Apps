@@ -50,6 +50,7 @@ typedef struct {
     FuriString* frequency_str;
     FuriString* preset_str;
     FuriString* history_stat_str;
+    FuriString* row_str;
     PCSGReceiverItemCallback item_callback;
     void* item_context;
     uint16_t idx;
@@ -244,8 +245,8 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
     //canvas_draw_line(canvas, 46, 51, 125, 51);
 
     bool scrollbar = model->history_item > 4;
-    FuriString* str_buff;
-    str_buff = furi_string_alloc();
+    FuriString* str_buff = model->row_str;
+    furi_string_reset(str_buff);
 
     for(size_t i = 0; i < MIN(model->history_item, MENU_ITEMS) && model->item_callback; ++i) {
         size_t idx = CLAMP((uint16_t)(i + model->list_offset), model->history_item, 0);
@@ -266,7 +267,7 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
     if(scrollbar) {
         elements_scrollbar_pos(canvas, 128, 0, 49, model->idx, model->history_item);
     }
-    furi_string_free(str_buff);
+    furi_string_reset(str_buff);
 
     canvas_set_color(canvas, ColorBlack);
 
@@ -525,6 +526,7 @@ PCSGReceiver* pcsg_view_receiver_alloc() {
             model->frequency_str = furi_string_alloc();
             model->preset_str = furi_string_alloc();
             model->history_stat_str = furi_string_alloc();
+            model->row_str = furi_string_alloc();
             model->bar_show = PCSGReceiverBarShowDefault;
         },
         true);
@@ -545,6 +547,7 @@ void pcsg_view_receiver_free(PCSGReceiver* pcsg_receiver) {
             furi_string_free(model->frequency_str);
             furi_string_free(model->preset_str);
             furi_string_free(model->history_stat_str);
+            furi_string_free(model->row_str);
         },
         false);
     furi_timer_free(pcsg_receiver->timer);

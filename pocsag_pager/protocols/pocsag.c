@@ -92,6 +92,7 @@ void* subghz_protocol_decoder_pocsag_alloc(SubGhzEnvironment* environment) {
     instance->pocsag_timing = NULL; //not synced yet
     instance->generic.result_msg = furi_string_alloc();
     instance->generic.result_ric = furi_string_alloc();
+    instance->generic.serialize_scratch = furi_string_alloc();
 
     return instance;
 }
@@ -107,6 +108,7 @@ void subghz_protocol_decoder_pocsag_free(void* context) {
     if(instance->generic.result_ric != NULL) {
         furi_string_free(instance->generic.result_ric);
     }
+    furi_string_free(instance->generic.serialize_scratch);
     free(instance);
 }
 

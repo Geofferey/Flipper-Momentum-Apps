@@ -309,6 +309,7 @@ void* subghz_protocol_decoder_flex_alloc(SubGhzEnvironment* environment) {
     instance->generic.protocol_name = instance->base.protocol->name;
     instance->generic.result_ric = furi_string_alloc();
     instance->generic.result_msg = furi_string_alloc();
+    instance->generic.serialize_scratch = furi_string_alloc();
     flex_return_to_sync(instance);
     return instance;
 }
@@ -318,6 +319,7 @@ void subghz_protocol_decoder_flex_free(void* context) {
     SubGhzProtocolDecoderFlex* instance = context;
     furi_string_free(instance->generic.result_ric);
     furi_string_free(instance->generic.result_msg);
+    furi_string_free(instance->generic.serialize_scratch);
     free(instance->partial);
     free(instance->phase_rel);
     for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
@@ -1222,7 +1224,13 @@ static bool flex_repair_page(
     uint8_t first,
     uint8_t last) {
     const uint8_t length = last - first + 1U;
-    if(!instance->partial) instance->partial = calloc(FLEX_PARTIAL_PAGES, sizeof(FlexPartialPage));
+    if(!instance->partial) {
+        instance->partial = calloc(FLEX_PARTIAL_PAGES, sizeof(FlexPartialPage));
+        if(!instance->partial) {
+            FURI_LOG_E(TAG, "Partial repair allocation failed");
+            return false;
+        }
+    }
     FlexPartialPage* partial =
         flex_find_partial(instance, capcode, type, words, valid, first, length);
 
@@ -1489,8 +1497,6 @@ static void flex_decode_phase(
                 flex_emit_page(instance);
             } else if(continuation || fragment != 3U) {
                 // Part of a longer message: join before emitting.
-                FuriString* part =
-                    furi_string_alloc_set_str(furi_string_get_cstr(instance->generic.result_msg) + 5);
                 flex_fragment_add(
                     instance,
                     capcode,
@@ -1498,9 +1504,8 @@ static void flex_decode_phase(
                     (header >> 13) & 0x3FU,
                     fragment,
                     continuation,
-                    furi_string_get_cstr(part),
+                    furi_string_get_cstr(instance->generic.result_msg) + 5,
                     phase);
-                furi_string_free(part);
             } else {
                 flex_emit_page(instance);
             }

@@ -60,5 +60,6 @@ bool pocsag_pager_scene_receiver_info_on_event(void* context, SceneManagerEvent 
 }
 
 void pocsag_pager_scene_receiver_info_on_exit(void* context) {
-    UNUSED(context);
+    POCSAGPagerApp* app = context;
+    pcsg_history_release_view_data(app->txrx->history);
 }

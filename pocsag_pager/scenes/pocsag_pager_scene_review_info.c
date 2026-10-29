@@ -16,5 +16,6 @@ bool pocsag_pager_scene_review_info_on_event(void* context, SceneManagerEvent ev
 }
 
 void pocsag_pager_scene_review_info_on_exit(void* context) {
-    UNUSED(context);
+    POCSAGPagerApp* app = context;
+    pcsg_log_release_view_data(app->log);
 }

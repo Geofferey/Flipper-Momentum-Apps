@@ -60,7 +60,6 @@ PCSGLog* pcsg_log_alloc(void) {
     PCSGLog* instance = calloc(1, sizeof(PCSGLog));
     instance->storage = furi_record_open(RECORD_STORAGE);
     instance->file = storage_file_alloc(instance->storage);
-    instance->scratch = flipper_format_string_alloc();
     instance->ric = furi_string_alloc();
     instance->message = furi_string_alloc();
     return instance;
@@ -71,7 +70,7 @@ void pcsg_log_free(PCSGLog* instance) {
     pcsg_log_close(instance);
     storage_file_free(instance->file);
     furi_record_close(RECORD_STORAGE);
-    flipper_format_free(instance->scratch);
+    if(instance->scratch) flipper_format_free(instance->scratch);
     furi_string_free(instance->ric);
     furi_string_free(instance->message);
     free(instance);
@@ -89,6 +88,7 @@ void pcsg_log_close(PCSGLog* instance) {
     instance->count = 0;
     instance->truncated = false;
     memset(instance->labels, 0, sizeof(instance->labels));
+    pcsg_log_release_view_data(instance);
 }
 
 bool pcsg_log_is_open(PCSGLog* instance) {
@@ -202,6 +202,7 @@ void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label) {
 FlipperFormat* pcsg_log_get_entry(PCSGLog* instance, uint16_t idx) {
     furi_assert(instance);
     FlipperFormat* result = NULL;
+    if(!instance->scratch) instance->scratch = flipper_format_string_alloc();
     char* line = pcsg_log_read_line(instance, idx);
     char* fields[PCSGLogFieldCount];
     if(line && pcsg_history_split_line(line, fields) &&
@@ -210,4 +211,12 @@ FlipperFormat* pcsg_log_get_entry(PCSGLog* instance, uint16_t idx) {
     }
     free(line);
     return result;
+}
+
+void pcsg_log_release_view_data(PCSGLog* instance) {
+    furi_assert(instance);
+    if(instance->scratch) {
+        flipper_format_free(instance->scratch);
+        instance->scratch = NULL;
+    }
 }

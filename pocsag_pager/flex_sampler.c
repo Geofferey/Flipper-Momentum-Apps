@@ -196,6 +196,9 @@ static void flex_stats_file_write(
     const FlexDecoderStats* stats) {
     if(!stats_file->open) return;
 
+    const size_t heap_free = memmgr_get_free_heap();
+    const size_t heap_min = memmgr_get_minimum_free_heap();
+    const size_t heap_block = memmgr_heap_get_max_free_block();
     char buffer[768];
     const int length = snprintf(
         buffer,
@@ -203,7 +206,8 @@ static void flex_stats_file_write(
         "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu\n"
         "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu\n"
         "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu\n"
-        "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n\n",
+        "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n"
+        "heap free/min/block=%lu/%lu/%lu\n\n",
         instance->sample_count,
         (long)instance->freq_correction_ppm,
         instance->symbol_count[0],
@@ -246,7 +250,10 @@ static void flex_stats_file_write(
         stats->joined_duplicate,
         stats->joined_checksum_rejected,
         stats->joined_signature_bad,
-        stats->pages_checksum_bad);
+        stats->pages_checksum_bad,
+        (unsigned long)heap_free,
+        (unsigned long)heap_min,
+        (unsigned long)heap_block);
     if(length > 0) {
         storage_file_write(
             stats_file->file, buffer, MIN((size_t)length, sizeof(buffer) - 1U));
@@ -416,6 +423,12 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.joined_checksum_rejected,
                 decoder_stats.joined_signature_bad,
                 decoder_stats.pages_checksum_bad);
+            FURI_LOG_I(
+                TAG,
+                "heap free/min/block=%lu/%lu/%lu",
+                (unsigned long)memmgr_get_free_heap(),
+                (unsigned long)memmgr_get_minimum_free_heap(),
+                (unsigned long)memmgr_heap_get_max_free_block());
             if(stats_file.open &&
                now - stats_file.last_write_tick >=
                    furi_ms_to_ticks(FLEX_STATS_FILE_INTERVAL_MS)) {
