@@ -20,9 +20,10 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
     // Decoders reset themselves at the end of a transmission; see the
     // receiver scene.
     UNUSED(receiver);
-    if(pcsg_filter_accepts(&app->filter, decoder_base)) {
-        const PCSGHistoryStateAddKey state =
-            pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset);
+    const bool display = pcsg_filter_accepts(&app->filter, decoder_base);
+    const PCSGHistoryStateAddKey state = pcsg_history_add_to_history(
+        app->txrx->history, decoder_base, app->txrx->preset, display);
+    if(display) {
         const uint16_t evicted = pcsg_history_last_evicted(app->txrx->history);
         if(state == PCSGHistoryStateAddKeyNewDada || state == PCSGHistoryStateAddKeyOverflow ||
            evicted) {

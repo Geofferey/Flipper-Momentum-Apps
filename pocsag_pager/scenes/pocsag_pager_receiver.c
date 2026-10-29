@@ -150,10 +150,11 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
     // page, POCSAG per address) and reset themselves when it ends, so the
     // receiver must not be reset here.
     UNUSED(receiver);
-    if(!pcsg_filter_accepts(&app->filter, decoder_base)) return;
+    const bool display = pcsg_filter_accepts(&app->filter, decoder_base);
 
     const PCSGHistoryStateAddKey state =
-        pcsg_history_add_to_history(app->txrx->history, decoder_base, app->txrx->preset);
+        pcsg_history_add_to_history(
+            app->txrx->history, decoder_base, app->txrx->preset, display);
     const uint16_t evicted = pcsg_history_last_evicted(app->txrx->history);
     if(state == PCSGHistoryStateAddKeyNewDada || state == PCSGHistoryStateAddKeyOverflow ||
        evicted) {
@@ -168,8 +169,8 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
     if(state == PCSGHistoryStateAddKeyNewDada) {
         notification_message(app->notifications, &sequence_blink_green_10);
         notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
+        app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
     }
-    app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
 }
 
 static void pocsag_pager_scene_receiver_item_callback(

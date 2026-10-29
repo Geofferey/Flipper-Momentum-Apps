@@ -114,7 +114,9 @@ FLEX decoding features:
 ## Logging
 
 Messages are written to the SD card as they arrive and the list keeps only a
-small index in RAM, so long sessions do not run out of memory.
+small index in RAM, so long sessions do not run out of memory. Display filters
+only control which messages enter the live list; the session log retains every
+decoded message, including duplicates, encrypted payloads and partial pages.
 
 - **Temp** (default): one hidden file, `/ext/pocsag/.session.tmp`, overwritten
   each receive session. It is overwritten with zeros and deleted when a new

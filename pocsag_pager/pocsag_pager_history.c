@@ -38,10 +38,6 @@ typedef struct PCSGHistoryBlock {
 } PCSGHistoryBlock;
 
 struct PCSGHistory {
-    uint32_t last_update_timestamp;
-    uint8_t code_last_hash_data;
-    bool has_last_hash;
-
     FuriMutex* mutex;
     // Oldest entries live in head_block from head_offset; newest fill tail_block
     // up to tail_fill. Both NULL when empty.
@@ -289,8 +285,6 @@ void pcsg_history_reset(PCSGHistory* instance) {
     instance->count = 0;
     instance->total = 0;
     instance->last_evicted = 0;
-    instance->code_last_hash_data = 0;
-    instance->has_last_hash = false;
     furi_mutex_release(instance->mutex);
 }
 
@@ -358,20 +352,17 @@ FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx) {
 }
 
 PCSGHistoryStateAddKey
-    pcsg_history_add_to_history(PCSGHistory* instance, void* context, SubGhzRadioPreset* preset) {
+    pcsg_history_add_to_history(
+        PCSGHistory* instance,
+        void* context,
+        SubGhzRadioPreset* preset,
+        bool display) {
     furi_assert(instance);
     furi_assert(context);
 
     SubGhzProtocolDecoderBase* decoder_base = context;
-    // Callers use this to reconcile their selection after every add attempt,
-    // including duplicate and serialization-error returns.
+    // Callers use this to reconcile their selection after every add attempt.
     instance->last_evicted = 0;
-    const uint8_t hash = subghz_protocol_decoder_base_get_hash_data(decoder_base);
-    if(instance->has_last_hash && (instance->code_last_hash_data == hash) &&
-       ((furi_get_tick() - instance->last_update_timestamp) < 500)) {
-        instance->last_update_timestamp = furi_get_tick();
-        return PCSGHistoryStateAddKeyTimeOut;
-    }
 
     // Ric and Message come back escaped from the serializer, ready for the log.
     FlipperFormat* scratch = instance->scratch;
@@ -419,6 +410,13 @@ PCSGHistoryStateAddKey
         // Keep the log intact if the app or the battery dies.
         storage_file_sync(instance->file);
 
+        instance->file_size += length + 1U;
+        instance->total++;
+        if(!display) {
+            state = PCSGHistoryStateAddKeyLogged;
+            break;
+        }
+
         // Roll the oldest entries off the viewable window while free heap is
         // tight, keeping at least PCSG_HISTORY_MIN_ITEMS. They stay in the log.
         while(instance->count > PCSG_HISTORY_MIN_ITEMS &&
@@ -437,12 +435,10 @@ PCSGHistoryStateAddKey
         }
         if(!item) {
             // Nothing could be stored in RAM, but the entry is in the SD log.
-            instance->file_size += length + 1U;
-            instance->total++;
             state = PCSGHistoryStateAddKeyOverflow;
             break;
         }
-        item->offset = instance->file_size;
+        item->offset = instance->file_size - (length + 1U);
         item->length = length;
         item->type = decoder_base->protocol->type;
 
@@ -458,16 +454,8 @@ PCSGHistoryStateAddKey
         furi_string_free(ric);
         furi_string_free(message);
 
-        instance->file_size += length + 1U;
-        instance->total++;
         state = PCSGHistoryStateAddKeyNewDada;
     } while(false);
     furi_mutex_release(instance->mutex);
-
-    if(state == PCSGHistoryStateAddKeyNewDada) {
-        instance->code_last_hash_data = hash;
-        instance->has_last_hash = true;
-        instance->last_update_timestamp = furi_get_tick();
-    }
     return state;
 }

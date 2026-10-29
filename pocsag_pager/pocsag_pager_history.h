@@ -50,7 +50,8 @@ typedef struct PCSGHistory PCSGHistory;
 /** History state add key */
 typedef enum {
     PCSGHistoryStateAddKeyUnknown,
-    PCSGHistoryStateAddKeyTimeOut,
+    /** Written to the session log but intentionally omitted from the viewer. */
+    PCSGHistoryStateAddKeyLogged,
     PCSGHistoryStateAddKeyNewDada,
     PCSGHistoryStateAddKeyUpdateData,
     PCSGHistoryStateAddKeyOverflow,
@@ -115,15 +116,20 @@ void pcsg_history_get_text_item_menu(PCSGHistory* instance, FuriString* output, 
  */
 bool pcsg_history_get_text_space_left(PCSGHistory* instance, FuriString* output);
 
-/** Add protocol to history and append it to the log file
+/** Append a protocol to the log file and optionally add it to the viewer.
  *
  * @param instance  - PCSGHistory instance
  * @param context    - SubGhzProtocolCommon context
  * @param preset    - SubGhzRadioPreset preset
+ * @param display   - include this entry in the live viewer
  * @return PCSGHistoryStateAddKey;
  */
 PCSGHistoryStateAddKey
-    pcsg_history_add_to_history(PCSGHistory* instance, void* context, SubGhzRadioPreset* preset);
+    pcsg_history_add_to_history(
+        PCSGHistory* instance,
+        void* context,
+        SubGhzRadioPreset* preset,
+        bool display);
 
 /** Read history[idx] back from the log file
  *
