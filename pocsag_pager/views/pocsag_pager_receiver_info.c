@@ -18,6 +18,10 @@ struct PCSGReceiverInfo {
 typedef struct {
     // Header and message as plain text, word-wrapped when drawn.
     FuriString* text;
+    // Exact byte offset of each wrapped line. Built on the first draw because
+    // pixel widths require a Canvas, then freed with the viewed message.
+    uint16_t* line_offsets;
+    bool layout_ready;
     uint16_t scroll;
     uint16_t lines;
 } PCSGReceiverInfoModel;
@@ -65,6 +69,9 @@ void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, Flippe
         {
             if(!model->text) model->text = furi_string_alloc();
             furi_string_reset(model->text);
+            free(model->line_offsets);
+            model->line_offsets = NULL;
+            model->layout_ready = false;
             FuriString* raw = furi_string_alloc();
             if(flipper_format_rewind(fff) && flipper_format_read_string(fff, "Ric", raw)) {
                 pcsg_view_receiver_info_append_unescaped(
@@ -83,50 +90,64 @@ void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, Flippe
         true);
 }
 
-/*
- * Word-wrap text to INFO_TEXT_WIDTH, drawing the INFO_LINES lines starting at
- * line first. Returns the total number of lines. Wrapping is done on every
- * draw: messages are at most a few hundred characters.
- */
-static uint16_t pcsg_view_receiver_info_layout(Canvas* canvas, const char* text, uint16_t first) {
+// Wrap one line, optionally returning its display text, and return the start
+// of the next line. The same function builds the cache and renders from it so
+// the two paths cannot disagree about wrapping.
+static const char* pcsg_view_receiver_info_next_line(
+    Canvas* canvas,
+    const char* text,
+    char line[INFO_LINE_CHARS]) {
+    size_t length = 0;
+    size_t space = SIZE_MAX;
+    while(text[length] && text[length] != '\n' && length < INFO_LINE_CHARS - 1U) {
+        line[length] = text[length];
+        line[length + 1U] = '\0';
+        if(length && canvas_string_width(canvas, line) > INFO_TEXT_WIDTH) break;
+        if(text[length] == ' ') space = length;
+        length++;
+    }
+
+    const bool wrapped = text[length] && text[length] != '\n';
+    size_t take = length;
+    size_t advance = length;
+    if(wrapped && space != SIZE_MAX && space > 0) {
+        take = space;
+        advance = space + 1U;
+    } else if(!wrapped && text[length] == '\n') {
+        advance = length + 1U;
+    }
+    if(advance == 0) advance = 1;
+    line[take] = '\0';
+
+    text += advance;
+    if(wrapped) {
+        while(*text == ' ') text++;
+    }
+    return text;
+}
+
+static void pcsg_view_receiver_info_cache_layout(
+    Canvas* canvas,
+    PCSGReceiverInfoModel* model) {
+    const char* const text = furi_string_get_cstr(model->text);
+    const char* cursor = text;
     char line[INFO_LINE_CHARS];
     uint16_t lines = 0;
-    while(*text) {
-        size_t length = 0;
-        size_t space = SIZE_MAX;
-        while(text[length] && text[length] != '\n' && length < sizeof(line) - 1U) {
-            line[length] = text[length];
-            line[length + 1U] = '\0';
-            if(length && canvas_string_width(canvas, line) > INFO_TEXT_WIDTH) break;
-            if(text[length] == ' ') space = length;
-            length++;
-        }
-
-        // Prefer to break at the last space; a single long word is split.
-        const bool wrapped = text[length] && text[length] != '\n';
-        size_t take = length;
-        size_t advance = length;
-        if(wrapped && space != SIZE_MAX && space > 0) {
-            take = space;
-            advance = space + 1U;
-        } else if(!wrapped && text[length] == '\n') {
-            advance = length + 1U;
-        }
-        if(advance == 0) advance = 1;
-        line[take] = '\0';
-
-        if(lines >= first && lines < first + INFO_LINES) {
-            canvas_draw_str(
-                canvas, 0, (lines - first + 1U) * INFO_LINE_HEIGHT - 2U, line);
-        }
+    while(*cursor && lines < UINT16_MAX) {
+        cursor = pcsg_view_receiver_info_next_line(canvas, cursor, line);
         lines++;
+    }
 
-        text += advance;
-        if(wrapped) {
-            while(*text == ' ') text++;
+    model->lines = lines;
+    model->line_offsets = lines ? malloc(lines * sizeof(uint16_t)) : NULL;
+    if(model->line_offsets) {
+        cursor = text;
+        for(uint16_t i = 0; i < lines; i++) {
+            model->line_offsets[i] = (uint16_t)(cursor - text);
+            cursor = pcsg_view_receiver_info_next_line(canvas, cursor, line);
         }
     }
-    return lines;
+    model->layout_ready = true;
 }
 
 void pcsg_view_receiver_info_draw(Canvas* canvas, PCSGReceiverInfoModel* model) {
@@ -134,8 +155,32 @@ void pcsg_view_receiver_info_draw(Canvas* canvas, PCSGReceiverInfoModel* model) 
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
 
-    model->lines =
-        pcsg_view_receiver_info_layout(canvas, furi_string_get_cstr(model->text), model->scroll);
+    if(!model->layout_ready) pcsg_view_receiver_info_cache_layout(canvas, model);
+    const char* const text = furi_string_get_cstr(model->text);
+    char line[INFO_LINE_CHARS];
+    if(model->line_offsets) {
+        const uint16_t last = MIN(model->lines, model->scroll + INFO_LINES);
+        for(uint16_t i = model->scroll; i < last; i++) {
+            pcsg_view_receiver_info_next_line(canvas, text + model->line_offsets[i], line);
+            canvas_draw_str(canvas, 0, (i - model->scroll + 1U) * INFO_LINE_HEIGHT - 2U, line);
+        }
+    } else {
+        // Allocation failure fallback: keep the message view usable by walking
+        // to the visible rows without retaining an index.
+        const char* cursor = text;
+        uint16_t line_index = 0;
+        while(*cursor && line_index < model->scroll + INFO_LINES) {
+            cursor = pcsg_view_receiver_info_next_line(canvas, cursor, line);
+            if(line_index >= model->scroll) {
+                canvas_draw_str(
+                    canvas,
+                    0,
+                    (line_index - model->scroll + 1U) * INFO_LINE_HEIGHT - 2U,
+                    line);
+            }
+            line_index++;
+        }
+    }
     if(model->lines > INFO_LINES) {
         elements_scrollbar_pos(
             canvas, 128, 0, 64, model->scroll, model->lines - INFO_LINES + 1U);
@@ -188,6 +233,9 @@ void pcsg_view_receiver_info_exit(void* context) {
                 furi_string_free(model->text);
                 model->text = NULL;
             }
+            free(model->line_offsets);
+            model->line_offsets = NULL;
+            model->layout_ready = false;
             model->scroll = 0;
             model->lines = 0;
         },
@@ -228,6 +276,7 @@ void pcsg_view_receiver_info_free(PCSGReceiverInfo* pcsg_receiver_info) {
         PCSGReceiverInfoModel * model,
         {
             if(model->text) furi_string_free(model->text);
+            free(model->line_offsets);
         },
         false);
 

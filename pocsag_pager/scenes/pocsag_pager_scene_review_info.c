@@ -6,6 +6,7 @@ void pocsag_pager_scene_review_info_on_enter(void* context) {
     POCSAGPagerApp* app = context;
     FlipperFormat* entry = pcsg_log_get_entry(app->log, app->review_idx);
     if(entry) pcsg_view_receiver_info_update(app->pcsg_receiver_info, entry);
+    pcsg_log_release_view_data(app->log);
     view_dispatcher_switch_to_view(app->view_dispatcher, POCSAGPagerViewReceiverInfo);
 }
 

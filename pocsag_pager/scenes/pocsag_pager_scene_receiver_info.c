@@ -48,6 +48,9 @@ void pocsag_pager_scene_receiver_info_on_enter(void* context) {
     FlipperFormat* entry =
         pcsg_history_get_raw_data(app->txrx->history, app->txrx->idx_menu_chosen);
     if(entry) pcsg_view_receiver_info_update(app->pcsg_receiver_info, entry);
+    // The view owns its decoded text now; release the full-message transport
+    // copy before its line cache is allocated on the first draw.
+    pcsg_history_release_view_data(app->txrx->history);
     view_dispatcher_switch_to_view(app->view_dispatcher, POCSAGPagerViewReceiverInfo);
 }
 
