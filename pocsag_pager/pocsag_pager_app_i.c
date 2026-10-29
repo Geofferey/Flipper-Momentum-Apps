@@ -129,6 +129,7 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
 
     if(flex4) {
         flex_sampler_set_capture(app->txrx->flex_sampler, app->filter.raw_capture);
+        flex_sampler_set_stats_log(app->txrx->flex_sampler, app->filter.stats_log);
         flex_sampler_set_weak_decode(app->txrx->flex_sampler, app->filter.weak_decode);
         flex_sampler_start(app->txrx->flex_sampler);
     } else {

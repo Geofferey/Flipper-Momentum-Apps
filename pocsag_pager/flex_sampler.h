@@ -17,6 +17,9 @@ bool flex_sampler_is_running(const FlexSampler* instance);
 /** Record this receive session's raw sample stream to a timestamped file. */
 void flex_sampler_set_capture(FlexSampler* instance, bool enable);
 
+/** Write periodic counter-only diagnostics to /ext/pocsag/stats.txt. */
+void flex_sampler_set_stats_log(FlexSampler* instance, bool enable);
+
 /** Enable opt-in soft-decision (Chase) recovery of weak FLEX4 words. */
 void flex_sampler_set_weak_decode(FlexSampler* instance, bool enable);
 

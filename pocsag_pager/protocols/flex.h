@@ -31,6 +31,11 @@ typedef struct {
     uint32_t joined_complete;
     uint32_t joined_orphan;
     uint32_t joined_timeout;
+    /** Join hardening: rejected controls, sequence gaps, duplicates, and bad signatures. */
+    uint32_t joined_checksum_rejected;
+    uint32_t joined_sequence_gap;
+    uint32_t joined_duplicate;
+    uint32_t joined_signature_bad;
     /** Phases dropped because the block information word failed BCH. */
     uint32_t phases_bad_biw;
     /** Pages skipped because the address or vector word failed BCH. */
@@ -61,7 +66,7 @@ typedef struct {
     bool repaired;
     /** A FLEX secure page, or text that looks like an encrypted payload. */
     bool encrypted;
-    /** Not fully decoded: failed header checksum, or a missing fragment. */
+    /** Not fully decoded: failed checksum/signature, orphan, or missing fragment. */
     bool partial;
     /** A word in this page was recovered by the Weak Decode (Chase) decoder. */
     bool chase;

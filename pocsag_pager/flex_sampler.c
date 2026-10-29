@@ -2,6 +2,7 @@
 
 #include "protocols/flex.h"
 
+#include <stdio.h>
 #include <furi.h>
 #include <furi_hal_bus.h>
 #include <furi_hal_interrupt.h>
@@ -29,6 +30,8 @@
 #define FLEX_CAPTURE_DIR      EXT_PATH("pocsag/captures")
 #define FLEX_CAPTURE_WINDOW_S 600U
 #define FLEX_CAPTURE_CHUNK    512U
+#define FLEX_STATS_PATH       EXT_PATH("pocsag/stats.txt")
+#define FLEX_STATS_FILE_INTERVAL_MS 30000U
 
 typedef struct {
     Storage* storage;
@@ -40,6 +43,13 @@ typedef struct {
     uint16_t length;
     uint8_t chunk[FLEX_CAPTURE_CHUNK];
 } FlexCapture;
+
+typedef struct {
+    Storage* storage;
+    File* file;
+    bool open;
+    uint32_t last_write_tick;
+} FlexStatsFile;
 
 static void flex_capture_open(FlexCapture* capture) {
     memset(capture, 0, sizeof(FlexCapture));
@@ -133,12 +143,109 @@ struct FlexSampler {
     volatile bool sound_gate;
     // Record the raw sample stream this session (see flex_sampler_set_capture).
     bool capture_enable;
+    // Write counter-only snapshots to /ext/pocsag/stats.txt.
+    bool stats_log_enable;
+    bool weak_decode_enable;
 };
 
 #define FLEX_SOUND_SILENCED 0xFFU
 
 // RX_HARD_DATA symbol to level, as in the FLEX decoder.
 static const uint8_t flex_sampler_levels[] = {1U, 0U, 2U, 3U};
+
+static void flex_stats_file_open(FlexStatsFile* stats_file, const FlexSampler* instance) {
+    memset(stats_file, 0, sizeof(FlexStatsFile));
+    stats_file->storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(stats_file->storage, EXT_PATH("pocsag"));
+    stats_file->file = storage_file_alloc(stats_file->storage);
+    stats_file->open = storage_file_open(
+        stats_file->file, FLEX_STATS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS);
+    if(stats_file->open) {
+        char header[96];
+        const int length = snprintf(
+            header,
+            sizeof(header),
+            "# FLEX4 counters only; no message content\nweak_decode=%u raw_capture=%u\n\n",
+            instance->weak_decode_enable,
+            instance->capture_enable);
+        if(length > 0) {
+            storage_file_write(
+                stats_file->file, header, MIN((size_t)length, sizeof(header) - 1U));
+        }
+        storage_file_sync(stats_file->file);
+        stats_file->last_write_tick = furi_get_tick();
+    } else {
+        FURI_LOG_E(TAG, "Stats file open failed");
+    }
+}
+
+static void flex_stats_file_write(
+    FlexStatsFile* stats_file,
+    const FlexSampler* instance,
+    const FlexDecoderStats* stats) {
+    if(!stats_file->open) return;
+
+    char buffer[768];
+    const int length = snprintf(
+        buffer,
+        sizeof(buffer),
+        "n=%lu h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu fix=%lu\n"
+        "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu\n"
+        "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu\n"
+        "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n\n",
+        instance->sample_count,
+        instance->symbol_count[0],
+        instance->symbol_count[1],
+        instance->symbol_count[2],
+        instance->symbol_count[3],
+        instance->transition_count,
+        instance->dropped_samples,
+        stats->sync_detected,
+        stats->fiw_valid,
+        stats->fiw_invalid,
+        stats->fiw_chase,
+        stats->frames_completed,
+        stats->pages_decoded,
+        stats->pages_repaired,
+        stats->words_total,
+        stats->words_bad,
+        stats->words_chase,
+        stats->pages_chase,
+        stats->phases_bad_biw,
+        stats->pages_bad_header,
+        stats->pages_long_address,
+        stats->pages_incomplete,
+        stats->words_bad_phase[0],
+        stats->words_bad_phase[1],
+        stats->words_bad_phase[2],
+        stats->words_bad_phase[3],
+        stats->pages_short_instruction,
+        stats->pages_bad_range,
+        stats->pages_parse_failed,
+        stats->fragments_first,
+        stats->fragments_more,
+        stats->fragments_last,
+        stats->joined_complete,
+        stats->joined_orphan,
+        stats->joined_timeout,
+        stats->joined_sequence_gap,
+        stats->joined_duplicate,
+        stats->joined_checksum_rejected,
+        stats->joined_signature_bad,
+        stats->pages_checksum_bad);
+    if(length > 0) {
+        storage_file_write(
+            stats_file->file, buffer, MIN((size_t)length, sizeof(buffer) - 1U));
+        storage_file_sync(stats_file->file);
+        stats_file->last_write_tick = furi_get_tick();
+    }
+}
+
+static void flex_stats_file_close(FlexStatsFile* stats_file) {
+    if(stats_file->open) storage_file_close(stats_file->file);
+    if(stats_file->file) storage_file_free(stats_file->file);
+    if(stats_file->storage) furi_record_close(RECORD_STORAGE);
+}
 
 static inline uint8_t flex_sampler_get(const uint8_t* samples, uint16_t index) {
     return (samples[index >> 2] >> ((3U - (index & 3U)) * 2U)) & 0x03U;
@@ -186,6 +293,8 @@ static void flex_sampler_timer_isr(void* context) {
 static int32_t flex_sampler_thread(void* context) {
     FlexSampler* instance = context;
     uint32_t last_log_tick = furi_get_tick();
+    FlexStatsFile stats_file = {0};
+    if(instance->stats_log_enable) flex_stats_file_open(&stats_file, instance);
     FlexCapture* capture = NULL;
     if(instance->capture_enable) {
         capture = malloc(sizeof(FlexCapture));
@@ -275,14 +384,23 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.pages_parse_failed);
             FURI_LOG_I(
                 TAG,
-                "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu ksum_bad=%lu",
+                "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu",
                 decoder_stats.fragments_first,
                 decoder_stats.fragments_more,
                 decoder_stats.fragments_last,
                 decoder_stats.joined_complete,
                 decoder_stats.joined_orphan,
                 decoder_stats.joined_timeout,
+                decoder_stats.joined_sequence_gap,
+                decoder_stats.joined_duplicate,
+                decoder_stats.joined_checksum_rejected,
+                decoder_stats.joined_signature_bad,
                 decoder_stats.pages_checksum_bad);
+            if(stats_file.open &&
+               now - stats_file.last_write_tick >=
+                   furi_ms_to_ticks(FLEX_STATS_FILE_INTERVAL_MS)) {
+                flex_stats_file_write(&stats_file, instance, &decoder_stats);
+            }
             last_log_tick = now;
         }
         if(!processed) furi_delay_tick(1);
@@ -296,6 +414,12 @@ static int32_t flex_sampler_thread(void* context) {
         flex_capture_close(capture);
         free(capture);
     }
+    if(stats_file.open) {
+        FlexDecoderStats final_stats;
+        subghz_protocol_decoder_flex_get_stats(instance->decoder, &final_stats);
+        flex_stats_file_write(&stats_file, instance, &final_stats);
+    }
+    flex_stats_file_close(&stats_file);
     return 0;
 }
 
@@ -418,8 +542,14 @@ void flex_sampler_set_capture(FlexSampler* instance, bool enable) {
     instance->capture_enable = enable;
 }
 
+void flex_sampler_set_stats_log(FlexSampler* instance, bool enable) {
+    furi_assert(instance);
+    instance->stats_log_enable = enable;
+}
+
 void flex_sampler_set_weak_decode(FlexSampler* instance, bool enable) {
     furi_assert(instance);
+    instance->weak_decode_enable = enable;
     subghz_protocol_decoder_flex_set_weak_decode(instance->decoder, enable);
 }
 

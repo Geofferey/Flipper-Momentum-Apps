@@ -111,8 +111,16 @@ typedef struct {
     uint8_t message_number;
     uint8_t next_fragment;
     uint8_t parts;
-    // Any fragment of this message was recovered by Weak Decode (Chase).
+    uint8_t signature;
+    uint8_t last_fragment;
+    bool signature_present;
+    bool last_continuation;
     bool chase;
+    bool repaired;
+    bool suspect;
+    uint32_t signature_sum;
+    uint32_t last_part_hash;
+    size_t last_part_length;
     // Phase and frame of the first part received, where the pager listens.
     char phase;
     uint8_t frame;
@@ -204,6 +212,9 @@ struct SubGhzProtocolDecoderFlex {
     uint8_t cur_rel_a;
     uint8_t cur_rel_b;
     bool page_chase;
+    // Signature from an initial alpha fragment and sum of this fragment's characters.
+    uint8_t alpha_signature;
+    uint32_t alpha_signature_sum;
 };
 
 #define FLEX_REL_WORD   32U
@@ -447,6 +458,8 @@ static bool flex_parse_alphanumeric(
     const char fragment_flag = continuation ? 'F' : (fragment == 3U ? 'K' : 'C');
     furi_string_set_str(instance->generic.result_msg, "ALN: ");
     const size_t message_start = furi_string_size(instance->generic.result_msg);
+    instance->alpha_signature = 0;
+    instance->alpha_signature_sum = 0;
 
     first++;
     if(first > last) return false;
@@ -454,10 +467,18 @@ static bool flex_parse_alphanumeric(
     for(uint8_t i = first; i <= last && !truncated; i++) {
         const uint32_t word = words[i];
         if(i > first || fragment != 3U) {
-            truncated |= !flex_append_character(instance->generic.result_msg, word & 0x7F);
+            const uint8_t character = word & 0x7F;
+            if(character != 0x03U) instance->alpha_signature_sum += character;
+            truncated |= !flex_append_character(instance->generic.result_msg, character);
+        } else {
+            instance->alpha_signature = word & 0x7FU;
         }
-        truncated |= !flex_append_character(instance->generic.result_msg, (word >> 7) & 0x7F);
-        truncated |= !flex_append_character(instance->generic.result_msg, (word >> 14) & 0x7F);
+        const uint8_t second = (word >> 7) & 0x7F;
+        const uint8_t third = (word >> 14) & 0x7F;
+        if(second != 0x03U) instance->alpha_signature_sum += second;
+        if(third != 0x03U) instance->alpha_signature_sum += third;
+        truncated |= !flex_append_character(instance->generic.result_msg, second);
+        truncated |= !flex_append_character(instance->generic.result_msg, third);
     }
 
     if(furi_string_size(instance->generic.result_msg) == message_start) return false;
@@ -728,8 +749,8 @@ static void flex_fragment_flush(
     furi_string_set_str(instance->generic.result_msg, "ALN: ");
     furi_string_cat(instance->generic.result_msg, slot->text);
 
-    instance->page_repaired = false;
-    instance->page_suspect = false;
+    instance->page_repaired = slot->repaired;
+    instance->page_suspect = slot->suspect;
     // Mark the joined message with W if Weak Decode recovered any of its parts.
     instance->page_chase = slot->chase;
     // Show and filter a joined message by where its first part arrived.
@@ -768,9 +789,11 @@ static void flex_fragment_add(
     bool continuation,
     const char* text,
     char phase) {
-    // Whether this fragment used Weak Decode (Chase). Capture it before any
-    // flush below resets instance->page_chase.
+    // Capture per-page state before a flush below replaces it with the state
+    // of the older joined message being emitted.
     const bool chase_used = instance->page_chase;
+    const bool repaired_used = instance->page_repaired;
+    const bool suspect_used = instance->page_suspect;
     if(fragment == 3U) {
         instance->stats.fragments_first++;
     } else if(continuation) {
@@ -787,6 +810,33 @@ static void flex_fragment_add(
             slot = candidate;
             break;
         }
+    }
+
+    const uint32_t part_hash = flex_text_hash(capcode, type, text);
+    const size_t part_length = strlen(text);
+
+    // A retransmitted copy of the most recently accepted fragment must not
+    // look like a missing fragment and add a false gap to the message.
+    if(slot && slot->last_fragment == fragment &&
+       slot->last_continuation == continuation && slot->last_part_hash == part_hash &&
+       slot->last_part_length == part_length) {
+        slot->chase = slot->chase || chase_used;
+        slot->repaired = slot->repaired || repaired_used;
+        slot->suspect = slot->suspect || suspect_used;
+        slot->tick = furi_get_tick();
+        instance->stats.joined_duplicate++;
+        return;
+    }
+
+    // A final fragment without a buffered start has useful text, but nothing
+    // was actually joined. Emit it as a partial continuation so the Partial
+    // Msgs setting decides whether it is displayed.
+    if(!slot && !continuation && fragment != 3U) {
+        instance->stats.joined_orphan++;
+        instance->page_suspect = true;
+        flex_set_page_header(instance, capcode, type, fragment, 'C', phase);
+        flex_emit_page(instance);
+        return;
     }
 
     // A new first fragment ends whatever was being joined for this message.
@@ -813,6 +863,8 @@ static void flex_fragment_add(
         slot->type = type;
         slot->message_number = message_number;
         slot->chase = chase_used;
+        slot->repaired = repaired_used;
+        slot->suspect = suspect_used;
         slot->text = furi_string_alloc();
         slot->phase = phase;
         slot->frame = instance->frame;
@@ -823,8 +875,11 @@ static void flex_fragment_add(
         }
     } else {
         slot->chase = slot->chase || chase_used;
+        slot->repaired = slot->repaired || repaired_used;
+        slot->suspect = slot->suspect || suspect_used;
         if(fragment != slot->next_fragment) {
             furi_string_cat_str(slot->text, FLEX_GAP_MARK);
+            instance->stats.joined_sequence_gap++;
         }
     }
 
@@ -837,10 +892,24 @@ static void flex_fragment_add(
         furi_string_cat_str(slot->text, text);
     }
     slot->parts++;
+    if(fragment == 3U) {
+        slot->signature = instance->alpha_signature;
+        slot->signature_present = true;
+    }
+    slot->signature_sum += instance->alpha_signature_sum;
     slot->next_fragment = fragment == 3U ? 0U : (fragment + 1U) % 3U;
+    slot->last_fragment = fragment;
+    slot->last_continuation = continuation;
+    slot->last_part_hash = part_hash;
+    slot->last_part_length = part_length;
     slot->tick = furi_get_tick();
 
     if(!continuation) {
+        if(!slot->signature_present ||
+           ((~slot->signature_sum) & 0x7FU) != slot->signature) {
+            slot->suspect = true;
+            instance->stats.joined_signature_bad++;
+        }
         instance->stats.joined_complete++;
         flex_fragment_flush(instance, slot, false);
     }
@@ -1168,7 +1237,9 @@ static void flex_decode_phase(
         // the wrong value. The header checksum covers the whole message: drop
         // a repaired page that fails it (its copies did not really agree) and
         // mark a received one as suspect.
-        if(alpha && !flex_alpha_checksum_valid(page_words, first, (uint8_t)last)) {
+        const bool alpha_checksum_valid =
+            !alpha || flex_alpha_checksum_valid(page_words, first, (uint8_t)last);
+        if(!alpha_checksum_valid) {
             instance->stats.pages_checksum_bad++;
             if(instance->page_repaired) continue;
             instance->page_suspect = true;
@@ -1189,7 +1260,15 @@ static void flex_decode_phase(
             const uint32_t header = page_words[first];
             const bool continuation = (header >> 10) & 0x01U;
             const uint8_t fragment = (header >> 11) & 0x03U;
-            if(continuation || fragment != 3U) {
+            if(!alpha_checksum_valid) {
+                // The fragment controls share this failed checksum. Preserve
+                // the available text as a partial page, but do not let an
+                // untrusted C/F/N field create, alter, or finish a join.
+                if(continuation || fragment != 3U) {
+                    instance->stats.joined_checksum_rejected++;
+                }
+                flex_emit_page(instance);
+            } else if(continuation || fragment != 3U) {
                 // Part of a longer message: join before emitting.
                 FuriString* part =
                     furi_string_alloc_set_str(furi_string_get_cstr(instance->generic.result_msg) + 5);

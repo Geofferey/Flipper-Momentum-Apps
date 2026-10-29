@@ -120,6 +120,11 @@ small index in RAM, so long sessions do not run out of memory.
   time and frequency, e.g. `2026-10-25_04-48-13_929.6125.txt`. One line per
   message: time, frequency, protocol, header and message, tab-separated.
 
+The debug **Stats Log** option writes counter-only FLEX4 snapshots to
+`/ext/pocsag/stats.txt` every 30 seconds and on normal exit, overwriting the
+file when the next enabled session starts. It records no capcodes or message
+text and can be used while the pager is unplugged.
+
 Logs can contain other people's personal information; see the
 [Disclaimer](#disclaimer).
 
@@ -150,8 +155,9 @@ for the file format. The DAPNET POCSAG frequency 439.9875 MHz is the default.
 
 The FLEX decoder was written for this app, using these projects as references:
 
-- **[multimon-ng](https://github.com/EliasOenal/multimon-ng)**, `demod_flex.c`
-  and `bch.c` (GPL-3.0-or-later). The protocol structure follows it: sync
+- **[multimon-ng](https://github.com/EliasOenal/multimon-ng)**, `demod_flex.c`,
+  `demod_flex_next.c` and `bch.c` (GPL-3.0-or-later). The protocol structure
+  follows it: sync
   words and the mode table, frame information word decoding, block
   deinterleaving into phases A-D, BCH(31,21) error correction (derived from
   its BCH implementation), block information, address and vector word
@@ -160,6 +166,8 @@ The FLEX decoder was written for this app, using these projects as references:
   test and the extra data word that long numeric and tone pages carry, and
   binary pages shown as hex like its `parse_unknown`. The long-address
   capcode formula is PDW's, as quoted in multimon-ng. Its FLEX decoder
+  fragment stream key, sequence tracking and whole-message signature checks
+  were also compared while hardening this app's fragment joining. It
   credits Craig Shelley, Jason Lingohr, Bruce Quinton, Ramon Smits, Rob0101,
   bierviltje and bertinholland, building on GNU Radio code (Free Software
   Foundation).

@@ -386,6 +386,13 @@ static void pocsag_pager_scene_receiver_config_set_raw_capture(VariableItem* ite
     app->filter.raw_capture = index == 1;
 }
 
+static void pocsag_pager_scene_receiver_config_set_stats_log(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, raw_capture_text[index]);
+    app->filter.stats_log = index == 1;
+}
+
 static void pocsag_pager_scene_receiver_config_set_weak_decode(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
@@ -695,6 +702,17 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         pocsag_pager_scene_receiver_config_set_raw_capture,
         app);
     value_index = app->filter.raw_capture ? 1 : 0;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, raw_capture_text[value_index]);
+
+    // Debug: periodic counter-only snapshots for untethered reception tests.
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Stats Log:",
+        RAW_CAPTURE_COUNT,
+        pocsag_pager_scene_receiver_config_set_stats_log,
+        app);
+    value_index = app->filter.stats_log ? 1 : 0;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, raw_capture_text[value_index]);
 
