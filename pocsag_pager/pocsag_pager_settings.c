@@ -16,10 +16,15 @@
 
 uint32_t pcsg_correct_frequency(int32_t ppm, uint32_t nominal) {
     if(ppm == 0) return nominal;
-    // Round to the nearest Hz; ppm stays well within int64 range at ~1 GHz.
-    const int64_t offset = ((int64_t)nominal * ppm + (ppm >= 0 ? 500000 : -500000)) / 1000000;
-    const int64_t corrected = (int64_t)nominal + offset;
-    return corrected < 0 ? 0 : (uint32_t)corrected;
+    // Round the offset to the nearest Hz, away from zero on a tie. Splitting
+    // nominal into whole * 1e6 + fraction keeps both products inside 32 bits:
+    // nominal * |ppm| / 1e6 == whole * |ppm| + (fraction * |ppm|) / 1e6. Doing
+    // this in 64-bit instead links in __udivmoddi4 (~700 bytes) for nothing.
+    const uint32_t magnitude = (uint32_t)(ppm < 0 ? -ppm : ppm);
+    const uint32_t offset = (nominal / 1000000U) * magnitude +
+                            ((nominal % 1000000U) * magnitude + 500000U) / 1000000U;
+    if(ppm < 0) return offset >= nominal ? 0U : nominal - offset;
+    return nominal + offset;
 }
 
 static bool pcsg_filter_in_range(
