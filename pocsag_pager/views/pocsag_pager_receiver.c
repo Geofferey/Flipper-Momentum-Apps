@@ -26,14 +26,18 @@ typedef enum {
     PCSGReceiverBarShowToUnlockPress,
     PCSGReceiverBarShowUnlock,
     PCSGReceiverBarShowHoldBack,
+    PCSGReceiverBarShowLatest,
     PCSGReceiverBarShowAddressFilter,
 } PCSGReceiverBarShow;
 
 #define HOLD_BACK_HINT_MS 1500
+#define DOUBLE_BACK_MS    500
 
 struct PCSGReceiver {
     PCSGLock lock;
     uint8_t lock_count;
+    bool back_tap_pending;
+    uint32_t back_tap_tick;
     FuriTimer* timer;
     // Clears the "Hold Back to exit" hint.
     FuriTimer* hint_timer;
@@ -306,6 +310,9 @@ void pcsg_view_receiver_draw(Canvas* canvas, PCSGReceiverModel* model) {
     case PCSGReceiverBarShowHoldBack:
         canvas_draw_str(canvas, 44, 62, "Hold Back to exit");
         break;
+    case PCSGReceiverBarShowLatest:
+        canvas_draw_str_aligned(canvas, 64, 62, AlignCenter, AlignBottom, "Latest message");
+        break;
     case PCSGReceiverBarShowAddressFilter:
         canvas_draw_str_aligned(
             canvas, 64, 62, AlignCenter, AlignBottom, model->filter_hint);
@@ -343,6 +350,7 @@ static void pcsg_view_receiver_hint_timer_callback(void* context) {
         PCSGReceiverModel * model,
         {
             if(model->bar_show == PCSGReceiverBarShowHoldBack ||
+               model->bar_show == PCSGReceiverBarShowLatest ||
                model->bar_show == PCSGReceiverBarShowAddressFilter) {
                 model->bar_show = PCSGReceiverBarShowDefault;
             }
@@ -380,6 +388,10 @@ bool pcsg_view_receiver_input(InputEvent* event, void* context) {
         return true;
     }
 
+    if(event->key != InputKeyBack && event->type == InputTypePress) {
+        pcsg_receiver->back_tap_pending = false;
+    }
+
     if(event->key == InputKeyBack) {
         // Leaving the receiver ends the session, so it takes a long press;
         // a short press only shows a hint. Reviewing a log leaves on a short
@@ -388,12 +400,26 @@ bool pcsg_view_receiver_input(InputEvent* event, void* context) {
         with_view_model(
             pcsg_receiver->view, PCSGReceiverModel * model, { review = model->review; }, false);
         if(event->type == (review ? InputTypeShort : InputTypeLong)) {
+            pcsg_receiver->back_tap_pending = false;
             pcsg_receiver->callback(PCSGCustomEventViewReceiverBack, pcsg_receiver->context);
         } else if(!review && event->type == InputTypeShort) {
+            const uint32_t now = furi_get_tick();
+            const bool double_tap =
+                pcsg_receiver->back_tap_pending &&
+                now - pcsg_receiver->back_tap_tick <= furi_ms_to_ticks(DOUBLE_BACK_MS);
+            pcsg_receiver->back_tap_pending = !double_tap;
+            pcsg_receiver->back_tap_tick = now;
             with_view_model(
                 pcsg_receiver->view,
                 PCSGReceiverModel * model,
-                { model->bar_show = PCSGReceiverBarShowHoldBack; },
+                {
+                    if(double_tap && model->history_item) {
+                        model->idx = model->history_item - 1U;
+                        model->bar_show = PCSGReceiverBarShowLatest;
+                    } else {
+                        model->bar_show = PCSGReceiverBarShowHoldBack;
+                    }
+                },
                 true);
             furi_timer_start(pcsg_receiver->hint_timer, HOLD_BACK_HINT_MS);
         }
@@ -473,6 +499,7 @@ void pcsg_view_receiver_exit(void* context) {
         false);
     furi_timer_stop(pcsg_receiver->timer);
     furi_timer_stop(pcsg_receiver->hint_timer);
+    pcsg_receiver->back_tap_pending = false;
 }
 
 PCSGReceiver* pcsg_view_receiver_alloc() {
@@ -483,6 +510,7 @@ PCSGReceiver* pcsg_view_receiver_alloc() {
 
     pcsg_receiver->lock = PCSGLockOff;
     pcsg_receiver->lock_count = 0;
+    pcsg_receiver->back_tap_pending = false;
     view_allocate_model(pcsg_receiver->view, ViewModelTypeLocking, sizeof(PCSGReceiverModel));
     view_set_context(pcsg_receiver->view, pcsg_receiver);
     view_set_draw_callback(pcsg_receiver->view, (ViewDrawCallback)pcsg_view_receiver_draw);

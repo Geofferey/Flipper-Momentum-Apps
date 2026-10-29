@@ -59,7 +59,8 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
 
 - **Receive messages** lists messages as they arrive; OK opens one (Up/Down
   scroll long messages). Hold OK on a message to enable an exact filter for
-  its FLEX CAP or POCSAG RIC. Left opens the receiver Config.
+  its FLEX CAP or POCSAG RIC. Double-press Back to jump to the newest message;
+  hold Back to end the receive session. Left opens the receiver Config.
 - **Review messages** opens a saved session log from `/ext/pocsag/logs`.
 - **Send messages** composes an alphanumeric POCSAG page for a destination RIC.
   It can also send an alphanumeric FLEX page to a short capcode. Select the
