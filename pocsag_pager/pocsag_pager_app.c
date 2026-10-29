@@ -253,6 +253,11 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     // Received messages are third-party traffic: keep nothing on SD unless
     // the user chooses Save.
     app->filter.log_temp = true;
+    // Preserve the receiver's existing cyan activity blink and green decode
+    // blink unless the user turns either indicator off.
+    app->filter.receive_led = true;
+    app->filter.receive_led_color = PCSGLedColorCyan;
+    app->filter.decode_led = true;
     app->filter.tone_volume = PCSGToneVolumeMedium;
     app->filter.tone_pitch = PCSGTonePitchMedium;
     app->filter.tone_spread = PCSGToneSpreadNormal;

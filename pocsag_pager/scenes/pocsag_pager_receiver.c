@@ -3,8 +3,6 @@
 #include "../protocols/flex.h"
 
 static const NotificationSequence subghs_sequence_rx = {
-    &message_green_255,
-
     &message_vibro_on,
     &message_note_c6,
     &message_delay_50,
@@ -16,8 +14,6 @@ static const NotificationSequence subghs_sequence_rx = {
 };
 
 static const NotificationSequence subghs_sequence_rx_locked = {
-    &message_green_255,
-
     &message_display_backlight_on,
 
     &message_vibro_on,
@@ -33,7 +29,6 @@ static const NotificationSequence subghs_sequence_rx_locked = {
 };
 
 static const NotificationSequence pcsg_sequence_rx_sound = {
-    &message_green_255,
     &message_note_c6,
     &message_delay_50,
     &message_sound_off,
@@ -42,7 +37,6 @@ static const NotificationSequence pcsg_sequence_rx_sound = {
 };
 
 static const NotificationSequence pcsg_sequence_rx_vibro = {
-    &message_green_255,
     &message_vibro_on,
     &message_delay_50,
     &message_vibro_off,
@@ -51,13 +45,11 @@ static const NotificationSequence pcsg_sequence_rx_vibro = {
 };
 
 static const NotificationSequence pcsg_sequence_rx_silent = {
-    &message_green_255,
     &message_delay_50,
     NULL,
 };
 
 static const NotificationSequence pcsg_sequence_rx_sound_locked = {
-    &message_green_255,
     &message_display_backlight_on,
     &message_note_c6,
     &message_delay_50,
@@ -68,7 +60,6 @@ static const NotificationSequence pcsg_sequence_rx_sound_locked = {
 };
 
 static const NotificationSequence pcsg_sequence_rx_vibro_locked = {
-    &message_green_255,
     &message_display_backlight_on,
     &message_vibro_on,
     &message_delay_50,
@@ -79,12 +70,39 @@ static const NotificationSequence pcsg_sequence_rx_vibro_locked = {
 };
 
 static const NotificationSequence pcsg_sequence_rx_silent_locked = {
-    &message_green_255,
     &message_display_backlight_on,
     &message_delay_500,
     &message_display_backlight_off,
     NULL,
 };
+
+static const NotificationSequence pcsg_sequence_blink_white_10 = {
+    &message_red_255,
+    &message_green_255,
+    &message_blue_255,
+    &message_delay_10,
+    NULL,
+};
+
+static const NotificationSequence* pocsag_pager_scene_receiver_led_color(PCSGLedColor color) {
+    switch(color) {
+    case PCSGLedColorBlue:
+        return &sequence_blink_blue_10;
+    case PCSGLedColorGreen:
+        return &sequence_blink_green_10;
+    case PCSGLedColorYellow:
+        return &sequence_blink_yellow_10;
+    case PCSGLedColorMagenta:
+        return &sequence_blink_magenta_10;
+    case PCSGLedColorRed:
+        return &sequence_blink_red_10;
+    case PCSGLedColorWhite:
+        return &pcsg_sequence_blink_white_10;
+    case PCSGLedColorCyan:
+    default:
+        return &sequence_blink_cyan_10;
+    }
+}
 
 // New-message notification for the Alert setting; locked variants also wake
 // the backlight briefly.
@@ -167,7 +185,9 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
         pocsag_pager_scene_receiver_update_statusbar(app);
     }
     if(state == PCSGHistoryStateAddKeyNewDada) {
-        notification_message(app->notifications, &sequence_blink_green_10);
+        if(app->filter.decode_led) {
+            notification_message(app->notifications, &sequence_blink_green_10);
+        }
         notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
         app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
     }
@@ -300,8 +320,10 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             pcsg_freq_auto_tick(app, 0.0f);
         }
 
-        if(app->txrx->txrx_state == PCSGTxRxStateRx) {
-            notification_message(app->notifications, &sequence_blink_cyan_10);
+        if(app->txrx->txrx_state == PCSGTxRxStateRx && app->filter.receive_led) {
+            notification_message(
+                app->notifications,
+                pocsag_pager_scene_receiver_led_color(app->filter.receive_led_color));
         }
     }
     return consumed;

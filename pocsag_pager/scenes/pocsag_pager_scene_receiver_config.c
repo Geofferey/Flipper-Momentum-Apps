@@ -10,6 +10,9 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFlexEncrypted,
     PCSGSettingIndexLogging,
     PCSGSettingIndexAlert,
+    PCSGSettingIndexReceiveLed,
+    PCSGSettingIndexReceiveLedColor,
+    PCSGSettingIndexDecodeLed,
     PCSGSettingIndexSignalSound,
     PCSGSettingIndexToneVolume,
     PCSGSettingIndexTonePitch,
@@ -81,6 +84,22 @@ const char* const alert_text[PCSGAlertCount] = {
     "Sound",
     "Vibro",
     "Off",
+};
+
+#define LED_TOGGLE_COUNT 2
+const char* const led_toggle_text[LED_TOGGLE_COUNT] = {
+    "Off",
+    "On",
+};
+
+const char* const led_color_text[PCSGLedColorCount] = {
+    "Cyan",
+    "Blue",
+    "Green",
+    "Yellow",
+    "Magenta",
+    "Red",
+    "White",
 };
 
 const char* const signal_sound_text[PCSGSoundCount] = {
@@ -355,6 +374,27 @@ static void pocsag_pager_scene_receiver_config_set_alert(VariableItem* item) {
     app->filter.alert = index;
 }
 
+static void pocsag_pager_scene_receiver_config_set_receive_led(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    const uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, led_toggle_text[index]);
+    app->filter.receive_led = index == 1U;
+}
+
+static void pocsag_pager_scene_receiver_config_set_receive_led_color(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    const uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, led_color_text[index]);
+    app->filter.receive_led_color = index;
+}
+
+static void pocsag_pager_scene_receiver_config_set_decode_led(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    const uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, led_toggle_text[index]);
+    app->filter.decode_led = index == 1U;
+}
+
 // The speaker is set up when receiving starts, so restart the radio.
 static void pocsag_pager_scene_receiver_config_set_signal_sound(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
@@ -586,6 +626,36 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         app);
     variable_item_set_current_value_index(item, app->filter.alert);
     variable_item_set_current_value_text(item, alert_text[app->filter.alert]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Receive LED:",
+        LED_TOGGLE_COUNT,
+        pocsag_pager_scene_receiver_config_set_receive_led,
+        app);
+    value_index = app->filter.receive_led ? 1U : 0U;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, led_toggle_text[value_index]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "RX LED Color:",
+        PCSGLedColorCount,
+        pocsag_pager_scene_receiver_config_set_receive_led_color,
+        app);
+    value_index = app->filter.receive_led_color;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, led_color_text[value_index]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Decode LED:",
+        LED_TOGGLE_COUNT,
+        pocsag_pager_scene_receiver_config_set_decode_led,
+        app);
+    value_index = app->filter.decode_led ? 1U : 0U;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, led_toggle_text[value_index]);
 
     item = variable_item_list_add(
         app->variable_item_list,

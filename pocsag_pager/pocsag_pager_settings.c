@@ -248,6 +248,18 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
            value < PagerTxProtocolCount) {
             app->tx_config.protocol = value;
         }
+        // Added at the end so version-1 settings written by older builds keep
+        // all preceding receiver and transmitter values.
+        if(flipper_format_read_uint32(file, "ReceiveLed", &value, 1)) {
+            filter->receive_led = value != 0;
+        }
+        if(flipper_format_read_uint32(file, "ReceiveLedColor", &value, 1) &&
+           value < PCSGLedColorCount) {
+            filter->receive_led_color = value;
+        }
+        if(flipper_format_read_uint32(file, "DecodeLed", &value, 1)) {
+            filter->decode_led = value != 0;
+        }
     } while(false);
 
     furi_string_free(text);
@@ -336,6 +348,12 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         }
         value = app->tx_config.protocol;
         if(!flipper_format_write_uint32(file, "TxProtocol", &value, 1)) break;
+        value = filter->receive_led;
+        if(!flipper_format_write_uint32(file, "ReceiveLed", &value, 1)) break;
+        value = filter->receive_led_color;
+        if(!flipper_format_write_uint32(file, "ReceiveLedColor", &value, 1)) break;
+        value = filter->decode_led;
+        if(!flipper_format_write_uint32(file, "DecodeLed", &value, 1)) break;
         saved = true;
     } while(false);
 

@@ -74,7 +74,10 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   pager infrastructure; the app does not bypass firmware region restrictions.
 - **Settings** is the same configuration, available before receiving:
   frequency, hopping, modulation, FLEX page types, binary pages, duplicates,
-  encrypted messages, logging and a capcode filter. Settings are saved to
+  encrypted messages, logging, receive/decode LED indicators and a capcode
+  filter. The receive activity blink can be disabled or set to cyan, blue,
+  green, yellow, magenta, red or white; the successful-decode green blink can
+  be disabled independently. Settings are saved to
   `/ext/apps_data/pocsag_pager/settings.txt` and restored at startup.
 
 Receiver settings and the transmitter protocol, frequency, address, function,

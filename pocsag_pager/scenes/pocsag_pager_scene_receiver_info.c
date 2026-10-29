@@ -32,7 +32,9 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
                                              0;
         }
         if(state == PCSGHistoryStateAddKeyNewDada) {
-            notification_message(app->notifications, &sequence_blink_green_10);
+            if(app->filter.decode_led) {
+                notification_message(app->notifications, &sequence_blink_green_10);
+            }
             app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
         }
     }

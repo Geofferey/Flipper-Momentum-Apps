@@ -59,7 +59,7 @@ typedef enum {
     PCSGFlexDupsCount,
 } PCSGFlexDups;
 
-/** Notification for a new message; the LED always blinks. */
+/** Sound/vibration notification for a new message; LED control is separate. */
 typedef enum {
     PCSGAlertBoth,
     PCSGAlertSound,
@@ -67,6 +67,18 @@ typedef enum {
     PCSGAlertOff,
     PCSGAlertCount,
 } PCSGAlert;
+
+/** RGB color used by the periodic receive indicator. */
+typedef enum {
+    PCSGLedColorCyan,
+    PCSGLedColorBlue,
+    PCSGLedColorGreen,
+    PCSGLedColorYellow,
+    PCSGLedColorMagenta,
+    PCSGLedColorRed,
+    PCSGLedColorWhite,
+    PCSGLedColorCount,
+} PCSGLedColor;
 
 /** Signal sound while receiving; saved as SignalSound (1 was the old "On"). */
 typedef enum {
@@ -124,6 +136,9 @@ typedef struct {
     // Log to one temp file destroyed on exit instead of a kept log per session.
     bool log_temp;
     PCSGAlert alert;
+    bool receive_led;
+    PCSGLedColor receive_led_color;
+    bool decode_led;
     PCSGSound signal_sound;
     PCSGToneVolume tone_volume;
     PCSGTonePitch tone_pitch;
