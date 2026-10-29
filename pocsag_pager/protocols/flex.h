@@ -81,6 +81,15 @@ typedef struct {
     uint8_t frame;
 } FlexPageInfo;
 
+/** Timing carried by the most recently validated frame information word. */
+typedef struct {
+    uint8_t cycle;
+    uint8_t frame;
+    uint32_t tick;
+    uint32_t sequence;
+    bool chase;
+} FlexFrameTiming;
+
 /** Rate at which RX_HARD_DATA is sampled: 8 samples per 3200-baud symbol. */
 #define FLEX_4FSK_SAMPLE_RATE_HZ 25600U
 
@@ -92,6 +101,8 @@ void subghz_protocol_decoder_flex_reset_stats(void* context);
 /** Describe the page most recently passed to the decoder callback. */
 void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* info);
 void subghz_protocol_decoder_flex_get_stats(void* context, FlexDecoderStats* stats);
+/** Copy the most recent FIW timing; false until a valid FIW has arrived. */
+bool subghz_protocol_decoder_flex_get_frame_timing(void* context, FlexFrameTiming* timing);
 /** True while the decoder is locked onto a frame (not hunting for sync). */
 bool subghz_protocol_decoder_flex_is_locked(void* context);
 

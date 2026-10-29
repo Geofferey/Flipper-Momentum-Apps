@@ -75,6 +75,7 @@ struct POCSAGPagerApp {
     uint8_t config_selected_index;
     // Config opened from the main menu rather than the receiver.
     bool config_standalone;
+    uint32_t time_sync_sequence;
 
     PocsagTxEncoder* tx_encoder;
     FlexTxEncoder* flex_tx_encoder;

@@ -139,6 +139,8 @@ typedef struct {
     bool receive_led;
     PCSGLedColor receive_led_color;
     bool decode_led;
+    // Set minute/second from fresh FLEX frame timing; date/hour stay local.
+    bool time_sync;
     PCSGSound signal_sound;
     PCSGToneVolume tone_volume;
     PCSGTonePitch tone_pitch;

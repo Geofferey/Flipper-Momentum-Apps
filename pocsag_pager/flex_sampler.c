@@ -629,3 +629,8 @@ uint32_t flex_sampler_completed_frames(const FlexSampler* instance) {
     subghz_protocol_decoder_flex_get_stats(instance->decoder, &stats);
     return stats.frames_completed;
 }
+
+bool flex_sampler_get_frame_timing(const FlexSampler* instance, FlexFrameTiming* timing) {
+    furi_assert(instance);
+    return subghz_protocol_decoder_flex_get_frame_timing(instance->decoder, timing);
+}

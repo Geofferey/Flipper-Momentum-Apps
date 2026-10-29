@@ -74,11 +74,19 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   pager infrastructure; the app does not bypass firmware region restrictions.
 - **Settings** is the same configuration, available before receiving:
   frequency, hopping, modulation, FLEX page types, binary pages, duplicates,
-  encrypted messages, logging, receive/decode LED indicators and a capcode
-  filter. The receive activity blink can be disabled or set to cyan, blue,
-  green, yellow, magenta, red or white; the successful-decode green blink can
-  be disabled independently. Settings are saved to
+  encrypted messages, logging, FLEX time sync, receive/decode LED indicators
+  and a capcode filter. The receive activity blink can be disabled or set to
+  cyan, blue, green, yellow, magenta, red or white; the successful-decode green
+  blink can be disabled independently. Settings are saved to
   `/ext/apps_data/pocsag_pager/settings.txt` and restored at startup.
+
+**Time sync** uses the cycle and frame number from a fresh, BCH-validated FLEX
+frame to correct the Flipper's minute and second to the nearest hour. It keeps
+the existing date and approximate hour, converts the GPS-based frame schedule
+to UTC using the current 18-second offset, ignores soft-recovered FIWs, and
+only adjusts errors of at least two seconds. It cannot determine the date,
+timezone or absolute hour, so those must already be set approximately
+correctly. The option is Off by default.
 
 Receiver settings and the transmitter protocol, frequency, address, function,
 baud, polarity and correction are saved on a clean app exit. Message text is
@@ -201,6 +209,16 @@ Written for this app: the CC1101 GDO sampling, the symbol clock recovery
 (a fractional-phase DPLL that follows the 1600 to 3200 baud switch),
 repair from multiple copies (including a two-copy BCH search),
 fragment joining, duplicate and encrypted detection, and SD logging.
+
+## References for FLEX time sync
+
+The cycle/frame clock uses the FLEX timing described in the
+[Hewlett-Packard Journal](https://vtda.org/pubs/HP_Journal/HP_Journal_1998-02.pdf):
+15 cycles per hour, 128 frames per four-minute cycle and 1.875 seconds per
+frame, synchronized to GPS time. The GPS-to-UTC conversion uses the current
+18-second offset documented by the
+[U.S. Coast Guard Navigation Center](https://www.navcen.uscg.gov/sites/default/files/pdf/gps/geninfo/2020SPSPerformanceStandardFINAL.pdf).
+Optional FLEX accurate-seconds BIWs are not yet decoded.
 
 ## References for the FLEX transmitter
 

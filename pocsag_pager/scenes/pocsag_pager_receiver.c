@@ -2,6 +2,14 @@
 #include "../views/pocsag_pager_receiver.h"
 #include "../protocols/flex.h"
 
+#include <datetime/datetime.h>
+#include <furi_hal_rtc.h>
+
+#define PCSG_TIME_SYNC_MAX_AGE_MS 5000U
+#define PCSG_TIME_SYNC_MIN_ADJUST_S 2
+// FLEX frames follow GPS time; GPS has led UTC by 18 seconds since 2017.
+#define PCSG_GPS_UTC_OFFSET_S 18U
+
 static const NotificationSequence subghs_sequence_rx = {
     &message_vibro_on,
     &message_note_c6,
@@ -102,6 +110,56 @@ static const NotificationSequence* pocsag_pager_scene_receiver_led_color(PCSGLed
     default:
         return &sequence_blink_cyan_10;
     }
+}
+
+static void pocsag_pager_scene_receiver_time_sync(POCSAGPagerApp* app) {
+    if(!app->filter.time_sync || app->txrx->txrx_state != PCSGTxRxStateRx) return;
+    if(strncmp(furi_string_get_cstr(app->txrx->preset->name), "FLEX", 4) != 0) return;
+
+    FlexFrameTiming timing;
+    if(!flex_sampler_get_frame_timing(app->txrx->flex_sampler, &timing) ||
+       timing.sequence == app->time_sync_sequence) {
+        return;
+    }
+    app->time_sync_sequence = timing.sequence;
+    if(timing.chase) return;
+
+    const uint32_t now_tick = furi_get_tick();
+    const uint32_t age_ticks = now_tick - timing.tick;
+    if(age_ticks > furi_ms_to_ticks(PCSG_TIME_SYNC_MAX_AGE_MS)) return;
+
+    const uint32_t age_ms =
+        (uint64_t)age_ticks * 1000U / furi_kernel_get_tick_frequency();
+    const uint32_t flex_ms =
+        (uint32_t)timing.cycle * 240000U + (uint32_t)timing.frame * 1875U + age_ms;
+    const uint32_t gps_second = ((flex_ms + 500U) / 1000U) % 3600U;
+    const int32_t flex_second =
+        (gps_second + 3600U - PCSG_GPS_UTC_OFFSET_S) % 3600U;
+
+    DateTime current;
+    furi_hal_rtc_get_datetime(&current);
+    const int32_t current_second = (int32_t)current.minute * 60 + current.second;
+    int32_t adjustment = flex_second - current_second;
+    if(adjustment > 1800) adjustment -= 3600;
+    if(adjustment < -1800) adjustment += 3600;
+    if(adjustment > -PCSG_TIME_SYNC_MIN_ADJUST_S &&
+       adjustment < PCSG_TIME_SYNC_MIN_ADJUST_S) {
+        return;
+    }
+
+    const int64_t current_timestamp = datetime_datetime_to_timestamp(&current);
+    const int64_t adjusted_timestamp = current_timestamp + adjustment;
+    if(adjusted_timestamp < 0 || adjusted_timestamp > UINT32_MAX) return;
+
+    DateTime adjusted;
+    datetime_timestamp_to_datetime((uint32_t)adjusted_timestamp, &adjusted);
+    furi_hal_rtc_set_datetime(&adjusted);
+    FURI_LOG_I(
+        "POCSAGPager",
+        "Time sync %+ld s from FLEX %02u.%03u",
+        (long)adjustment,
+        timing.cycle,
+        timing.frame);
 }
 
 // New-message notification for the Alert setting; locked variants also wake
@@ -303,6 +361,7 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             break;
         }
     } else if(event.type == SceneManagerEventTypeTick) {
+        pocsag_pager_scene_receiver_time_sync(app);
         const bool flex4 =
             pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name));
         if(!flex4 && app->txrx->hopper_state != PCSGHopperStateOFF) {

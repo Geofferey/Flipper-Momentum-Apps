@@ -161,6 +161,12 @@ struct SubGhzProtocolDecoderFlex {
     bool frame_chase;
     uint8_t cycle;
     uint8_t frame;
+    volatile uint32_t timing_sequence;
+    volatile uint32_t timing_tick;
+    volatile uint8_t timing_cycle;
+    volatile uint8_t timing_frame;
+    volatile bool timing_valid;
+    volatile bool timing_chase;
 
     uint16_t sync2_count;
     uint16_t data_count;
@@ -267,6 +273,22 @@ static void flex_reset_clock(SubGhzProtocolDecoderFlex* instance) {
     memset(instance->clock_votes, 0, sizeof(instance->clock_votes));
 }
 
+static void flex_clear_timing(SubGhzProtocolDecoderFlex* instance) {
+    instance->timing_sequence++;
+    instance->timing_valid = false;
+    instance->timing_sequence++;
+}
+
+static void flex_publish_timing(SubGhzProtocolDecoderFlex* instance) {
+    instance->timing_sequence++;
+    instance->timing_tick = furi_get_tick();
+    instance->timing_cycle = instance->cycle;
+    instance->timing_frame = instance->frame;
+    instance->timing_chase = instance->frame_chase;
+    instance->timing_valid = true;
+    instance->timing_sequence++;
+}
+
 // The 4-FSK symbol clock keeps running across frame boundaries and failed
 // headers; only a full decoder reset discards it.
 static void flex_return_to_sync(SubGhzProtocolDecoderFlex* instance) {
@@ -309,6 +331,7 @@ void subghz_protocol_decoder_flex_reset(void* context) {
     SubGhzProtocolDecoderFlex* instance = context;
     flex_return_to_sync(instance);
     flex_reset_clock(instance);
+    flex_clear_timing(instance);
     instance->capcode = 0;
     instance->page_type = 0;
     instance->fragment = 0;
@@ -1605,6 +1628,7 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t sym
         if(instance->fiw_count == 48U) {
             if(flex_decode_fiw(instance)) {
                 instance->stats.fiw_valid++;
+                flex_publish_timing(instance);
                 instance->sync2_count = 0;
                 instance->state = FlexDecoderStateSync2;
             } else {
@@ -1819,6 +1843,26 @@ void subghz_protocol_decoder_flex_get_stats(void* context, FlexDecoderStats* sta
     furi_assert(stats);
     const SubGhzProtocolDecoderFlex* instance = context;
     *stats = instance->stats;
+}
+
+bool subghz_protocol_decoder_flex_get_frame_timing(void* context, FlexFrameTiming* timing) {
+    furi_assert(context);
+    furi_assert(timing);
+    SubGhzProtocolDecoderFlex* instance = context;
+
+    uint32_t before;
+    while(true) {
+        before = instance->timing_sequence;
+        if(before & 1U) continue;
+        timing->cycle = instance->timing_cycle;
+        timing->frame = instance->timing_frame;
+        timing->tick = instance->timing_tick;
+        timing->sequence = before;
+        timing->chase = instance->timing_chase;
+        const bool valid = instance->timing_valid;
+        const uint32_t after = instance->timing_sequence;
+        if(before == after && !(after & 1U)) return valid;
+    }
 }
 
 bool subghz_protocol_decoder_flex_is_locked(void* context) {

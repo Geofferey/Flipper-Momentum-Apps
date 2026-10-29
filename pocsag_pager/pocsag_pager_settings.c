@@ -260,6 +260,9 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "DecodeLed", &value, 1)) {
             filter->decode_led = value != 0;
         }
+        if(flipper_format_read_uint32(file, "TimeSync", &value, 1)) {
+            filter->time_sync = value != 0;
+        }
     } while(false);
 
     furi_string_free(text);
@@ -354,6 +357,8 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "ReceiveLedColor", &value, 1)) break;
         value = filter->decode_led;
         if(!flipper_format_write_uint32(file, "DecodeLed", &value, 1)) break;
+        value = filter->time_sync;
+        if(!flipper_format_write_uint32(file, "TimeSync", &value, 1)) break;
         saved = true;
     } while(false);
 

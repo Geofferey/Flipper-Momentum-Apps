@@ -2,6 +2,7 @@
 
 #include <lib/subghz/devices/devices.h>
 #include <lib/subghz/protocols/base.h>
+#include "protocols/flex.h"
 
 typedef struct FlexSampler FlexSampler;
 
@@ -22,6 +23,9 @@ bool flex_sampler_is_locked(const FlexSampler* instance);
 
 /** Number of valid FLEX frames completed since the sampler was started. */
 uint32_t flex_sampler_completed_frames(const FlexSampler* instance);
+
+/** Copy timing from the FLEX decoder shared by two- and four-level RX. */
+bool flex_sampler_get_frame_timing(const FlexSampler* instance, FlexFrameTiming* timing);
 
 /** Record this receive session's raw sample stream to a timestamped file. */
 void flex_sampler_set_capture(FlexSampler* instance, bool enable);

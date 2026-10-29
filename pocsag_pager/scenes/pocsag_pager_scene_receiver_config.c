@@ -13,6 +13,7 @@ enum PCSGSettingIndex {
     PCSGSettingIndexReceiveLed,
     PCSGSettingIndexReceiveLedColor,
     PCSGSettingIndexDecodeLed,
+    PCSGSettingIndexTimeSync,
     PCSGSettingIndexSignalSound,
     PCSGSettingIndexToneVolume,
     PCSGSettingIndexTonePitch,
@@ -395,6 +396,13 @@ static void pocsag_pager_scene_receiver_config_set_decode_led(VariableItem* item
     app->filter.decode_led = index == 1U;
 }
 
+static void pocsag_pager_scene_receiver_config_set_time_sync(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    const uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, led_toggle_text[index]);
+    app->filter.time_sync = index == 1U;
+}
+
 // The speaker is set up when receiving starts, so restart the radio.
 static void pocsag_pager_scene_receiver_config_set_signal_sound(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
@@ -654,6 +662,16 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         pocsag_pager_scene_receiver_config_set_decode_led,
         app);
     value_index = app->filter.decode_led ? 1U : 0U;
+    variable_item_set_current_value_index(item, value_index);
+    variable_item_set_current_value_text(item, led_toggle_text[value_index]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Time sync:",
+        LED_TOGGLE_COUNT,
+        pocsag_pager_scene_receiver_config_set_time_sync,
+        app);
+    value_index = app->filter.time_sync ? 1U : 0U;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, led_toggle_text[value_index]);
 
