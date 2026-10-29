@@ -50,6 +50,15 @@ typedef enum {
     PCSGPhaseFilterCount,
 } PCSGPhaseFilter;
 
+/** FLEX duplicate handling in the live viewer. */
+typedef enum {
+    PCSGFlexDupsHide,
+    PCSGFlexDupsShow,
+    /** Show copies to different capcodes, but hide same-cap retransmits. */
+    PCSGFlexDupsCaps,
+    PCSGFlexDupsCount,
+} PCSGFlexDups;
+
 /** Notification for a new message; the LED always blinks. */
 typedef enum {
     PCSGAlertBoth,
@@ -108,7 +117,7 @@ typedef struct {
     PCSGCapcodeFilter ric_filter;
     uint32_t ric_min;
     uint32_t ric_max;
-    bool hide_duplicates;
+    PCSGFlexDups flex_dups;
     bool hide_encrypted;
     // Discard FLEX messages that could not be fully decoded (off by default).
     bool hide_partial;

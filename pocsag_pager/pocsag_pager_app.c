@@ -249,7 +249,7 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     app->filter.type_filter = PCSGTypeFilterAll;
     app->filter.show_binary = true;
     app->filter.capcode_filter = PCSGCapcodeFilterOff;
-    app->filter.hide_duplicates = true;
+    app->filter.flex_dups = PCSGFlexDupsHide;
     // Received messages are third-party traffic: keep nothing on SD unless
     // the user chooses Save.
     app->filter.log_temp = true;

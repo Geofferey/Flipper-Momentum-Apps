@@ -101,8 +101,11 @@ FLEX decoding features:
   marked `?`.
 - Pages with uncorrectable words are repaired from later copies when the
   network retransmits them (marked `R`).
-- Duplicates (same capcode and text within 5 minutes, ignoring a trailing
-  `[NN]` counter) can be hidden.
+- FLEX Dups can hide repeated content, show every page, or use **CAPS** mode.
+  Hide displays only the first copy regardless of capcode. CAPS shows copies
+  addressed to different capcodes but hides true retransmits to the same cap.
+  Show displays every copy. Duplicate copies remain available to repair/ECC
+  before this display filter runs, and every copy remains in the SD log.
 - Messages that look like encrypted payloads can be hidden. This includes
   FLEX secure pages and wholly opaque Base64, Base64url, hexadecimal or mixed
   printable payloads; readable messages containing only an opaque field remain

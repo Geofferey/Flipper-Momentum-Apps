@@ -62,8 +62,10 @@ typedef enum {
 typedef struct {
     uint32_t capcode;
     FlexPageKind kind;
-    /** The same page was already emitted within the last few minutes. */
+    /** The same content was already emitted to any capcode recently. */
     bool duplicate;
+    /** The same content was already emitted to this capcode recently. */
+    bool same_cap_duplicate;
     /** Some words were rebuilt from earlier copies of the page. */
     bool repaired;
     /** A FLEX secure page, or text that looks like an encrypted payload. */

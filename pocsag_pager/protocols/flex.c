@@ -106,6 +106,7 @@ typedef struct {
 typedef struct {
     uint32_t hash;
     uint32_t tick;
+    uint32_t capcode;
 } FlexSeenPage;
 
 typedef struct {
@@ -193,6 +194,7 @@ struct SubGhzProtocolDecoderFlex {
     bool page_suspect;
     bool page_partial;
     bool page_duplicate;
+    bool page_same_cap_duplicate;
     bool page_encrypted;
     // Where the page (or a joined message's first part) was received.
     char page_phase;
@@ -683,18 +685,36 @@ static uint32_t flex_text_hash(uint32_t capcode, uint8_t type, const char* text)
     return hash | 1U;
 }
 
-// Remember the page and report whether the same page was emitted recently.
-static bool flex_seen_check(SubGhzProtocolDecoderFlex* instance, uint32_t hash) {
+// Remember content independently of its destination. Report both any recent
+// copy and a true retransmit to this same capcode so the display can choose
+// between Hide, CAPS and Show without affecting repair/ECC.
+static bool flex_seen_check(
+    SubGhzProtocolDecoderFlex* instance,
+    uint32_t hash,
+    uint32_t capcode,
+    bool* same_cap) {
     const uint32_t now = furi_get_tick();
     const uint32_t window = furi_ms_to_ticks(FLEX_DUPLICATE_WINDOW_MS);
+    bool duplicate = false;
+    *same_cap = false;
     for(size_t i = 0; i < FLEX_SEEN_PAGES; i++) {
-        const FlexSeenPage* seen = &instance->seen[i];
-        if(seen->hash == hash && now - seen->tick < window) return true;
+        FlexSeenPage* seen = &instance->seen[i];
+        if(seen->hash != hash || now - seen->tick >= window) continue;
+        duplicate = true;
+        if(seen->capcode == capcode) {
+            *same_cap = true;
+            seen->tick = now;
+        }
     }
-    instance->seen[instance->seen_next].hash = hash;
-    instance->seen[instance->seen_next].tick = now;
-    instance->seen_next = (instance->seen_next + 1U) % FLEX_SEEN_PAGES;
-    return false;
+    // A new destination needs its own slot so its later retransmits can be
+    // distinguished from copies addressed to other capcodes.
+    if(!*same_cap) {
+        instance->seen[instance->seen_next].hash = hash;
+        instance->seen[instance->seen_next].tick = now;
+        instance->seen[instance->seen_next].capcode = capcode;
+        instance->seen_next = (instance->seen_next + 1U) % FLEX_SEEN_PAGES;
+    }
+    return duplicate;
 }
 
 static uint8_t flex_character_class(char c) {
@@ -828,7 +848,8 @@ static bool flex_text_looks_encrypted(const char* text, bool allow_short_fragmen
 
 static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
     const char* message = furi_string_get_cstr(instance->generic.result_msg);
-    const uint32_t hash = flex_text_hash(instance->capcode, instance->page_type, message);
+    // Zero capcode deliberately makes this a content key across destinations.
+    const uint32_t hash = flex_text_hash(0, instance->page_type, message);
     instance->page_phase = instance->phase;
     instance->page_frame = instance->frame;
     instance->page_encrypted =
@@ -837,7 +858,8 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
          flex_text_looks_encrypted(
              message + 5, instance->page_suspect && instance->fragment <= 2U));
     if(instance->page_encrypted) instance->stats.pages_encrypted++;
-    instance->page_duplicate = flex_seen_check(instance, hash);
+    instance->page_duplicate = flex_seen_check(
+        instance, hash, instance->capcode, &instance->page_same_cap_duplicate);
     // Not fully decoded: a failed header checksum, or a joined message missing
     // one or more fragments.
     instance->page_partial = instance->page_suspect || strstr(message, FLEX_GAP_MARK) != NULL;
@@ -1700,6 +1722,7 @@ void subghz_protocol_decoder_flex_get_page_info(void* context, FlexPageInfo* inf
     const SubGhzProtocolDecoderFlex* instance = context;
     info->capcode = instance->capcode;
     info->duplicate = instance->page_duplicate;
+    info->same_cap_duplicate = instance->page_same_cap_duplicate;
     info->repaired = instance->page_repaired;
     info->encrypted = instance->page_encrypted;
     info->partial = instance->page_partial;

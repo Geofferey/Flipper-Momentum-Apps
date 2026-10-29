@@ -55,7 +55,8 @@ bool pcsg_filter_accepts(
 
     FlexPageInfo page;
     subghz_protocol_decoder_flex_get_page_info(decoder_base, &page);
-    if(page.duplicate && filter->hide_duplicates) return false;
+    if(filter->flex_dups == PCSGFlexDupsHide && page.duplicate) return false;
+    if(filter->flex_dups == PCSGFlexDupsCaps && page.same_cap_duplicate) return false;
     if(page.encrypted && filter->hide_encrypted) return false;
     if(page.partial && filter->hide_partial) return false;
 
@@ -142,8 +143,9 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
            value <= PCSG_CAPCODE_MAX) {
             filter->capcode_max = value;
         }
-        if(flipper_format_read_uint32(file, "FlexDups", &value, 1)) {
-            filter->hide_duplicates = value == 0;
+        if(flipper_format_read_uint32(file, "FlexDups", &value, 1) &&
+           value < PCSGFlexDupsCount) {
+            filter->flex_dups = value;
         }
         if(flipper_format_read_uint32(file, "FlexEncrypted", &value, 1)) {
             filter->hide_encrypted = value == 0;
@@ -276,7 +278,7 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "CapcodeFilter", &value, 1)) break;
         if(!flipper_format_write_uint32(file, "CapcodeMin", &filter->capcode_min, 1)) break;
         if(!flipper_format_write_uint32(file, "CapcodeMax", &filter->capcode_max, 1)) break;
-        value = !filter->hide_duplicates;
+        value = filter->flex_dups;
         if(!flipper_format_write_uint32(file, "FlexDups", &value, 1)) break;
         value = !filter->hide_encrypted;
         if(!flipper_format_write_uint32(file, "FlexEncrypted", &value, 1)) break;
