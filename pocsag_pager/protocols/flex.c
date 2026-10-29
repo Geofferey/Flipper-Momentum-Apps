@@ -44,10 +44,12 @@
 // each needing a slot; idle slots hold no text.
 #define FLEX_FRAGMENT_SLOTS      8U
 #define FLEX_FRAGMENT_TIMEOUT_MS (4U * 60U * 1000U)
-#define FLEX_ENCRYPTED_BASE64_RUN 28U
-#define FLEX_ENCRYPTED_HEX_RUN    32U
-#define FLEX_ENCRYPTED_GENERIC_RUN 40U
-#define FLEX_ENCRYPTED_MIN_UNIQUE  16U
+#define FLEX_ENCRYPTED_BASE64_RUN    20U
+#define FLEX_ENCRYPTED_SHORT_MIN     8U
+#define FLEX_ENCRYPTED_SHORT_MAX     19U
+#define FLEX_ENCRYPTED_HEX_RUN       32U
+#define FLEX_ENCRYPTED_GENERIC_RUN   40U
+#define FLEX_ENCRYPTED_MIN_UNIQUE    16U
 #define FLEX_JOINED_MAX_CHARS    1024U
 #define FLEX_GAP_MARK            "[...]"
 
@@ -706,6 +708,10 @@ static uint8_t flex_unique_characters(uint64_t low, uint64_t high) {
     return (uint8_t)(__builtin_popcountll(low) + __builtin_popcountll(high));
 }
 
+static bool flex_run_is_payload(size_t run, size_t payload, bool allow_terminator) {
+    return payload && (run == payload || (allow_terminator && run + 1U == payload));
+}
+
 /*
  * Networks also carry encrypted data in ordinary ALN pages. Detect common
  * opaque encodings while remaining conservative around normal prose:
@@ -717,16 +723,31 @@ static uint8_t flex_unique_characters(uint64_t low, uint64_t high) {
  *
  * FLEX_GAP_MARK is generated locally for a missing fragment. Treat it as
  * transparent so one damaged encrypted message does not become two short runs
- * that evade the filter.
+ * that evade the filter. The opaque run must occupy the whole payload (apart
+ * from one possible terminator), so a readable message containing an opaque
+ * field remains visible. Very short padded runs are accepted only for suspect
+ * continuation pages, matching truncated encrypted fragments in capture logs.
  */
-static bool flex_text_looks_encrypted(const char* text) {
+static bool flex_text_looks_encrypted(const char* text, bool allow_short_fragment) {
     const size_t length = strlen(text);
+    size_t payload_length = 0;
+    for(size_t i = 0; i < length; i++) {
+        if(i + sizeof(FLEX_GAP_MARK) - 1U <= length &&
+           !memcmp(text + i, FLEX_GAP_MARK, sizeof(FLEX_GAP_MARK) - 1U)) {
+            i += sizeof(FLEX_GAP_MARK) - 2U;
+        } else {
+            payload_length++;
+        }
+    }
+
     size_t base64_run = 0;
     size_t hex_run = 0;
     size_t printable_run = 0;
     uint8_t base64_classes = 0;
     uint8_t hex_classes = 0;
     uint8_t printable_classes = 0;
+    char base64_previous = '\0';
+    char base64_last = '\0';
     uint64_t printable_low = 0;
     uint64_t printable_high = 0;
 
@@ -746,13 +767,25 @@ static bool flex_text_looks_encrypted(const char* text) {
         if(base64) {
             base64_run++;
             base64_classes |= flex_character_class(c);
+            base64_previous = base64_last;
+            base64_last = c;
         } else {
-            if(base64_run >= FLEX_ENCRYPTED_BASE64_RUN && (base64_classes & 3U) == 3U &&
-               (base64_classes & 12U)) {
+            const bool mixed_base64 = (base64_classes & 3U) == 3U && (base64_classes & 12U);
+            const bool long_opaque = base64_run >= FLEX_ENCRYPTED_BASE64_RUN &&
+                                     flex_run_is_payload(base64_run, payload_length, true);
+            const bool short_padded = allow_short_fragment &&
+                                      base64_run >= FLEX_ENCRYPTED_SHORT_MIN &&
+                                      base64_run <= FLEX_ENCRYPTED_SHORT_MAX &&
+                                      base64_run == payload_length &&
+                                      (base64_classes & 7U) == 7U &&
+                                      base64_previous == 'A' && base64_last == 'A';
+            if(mixed_base64 && (long_opaque || short_padded)) {
                 return true;
             }
             base64_run = 0;
             base64_classes = 0;
+            base64_previous = '\0';
+            base64_last = '\0';
         }
 
         const bool hex = digit || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
@@ -760,7 +793,10 @@ static bool flex_text_looks_encrypted(const char* text) {
             hex_run++;
             hex_classes |= digit ? 1U : 2U;
         } else {
-            if(hex_run >= FLEX_ENCRYPTED_HEX_RUN && hex_classes == 3U) return true;
+            if(hex_run >= FLEX_ENCRYPTED_HEX_RUN && hex_classes == 3U &&
+               flex_run_is_payload(hex_run, payload_length, true)) {
+                return true;
+            }
             hex_run = 0;
             hex_classes = 0;
         }
@@ -777,7 +813,8 @@ static bool flex_text_looks_encrypted(const char* text) {
         } else {
             if(printable_run >= FLEX_ENCRYPTED_GENERIC_RUN && printable_classes == 15U &&
                flex_unique_characters(printable_low, printable_high) >=
-                   FLEX_ENCRYPTED_MIN_UNIQUE) {
+                   FLEX_ENCRYPTED_MIN_UNIQUE &&
+               flex_run_is_payload(printable_run, payload_length, false)) {
                 return true;
             }
             printable_run = 0;
@@ -797,7 +834,8 @@ static void flex_emit_page(SubGhzProtocolDecoderFlex* instance) {
     instance->page_encrypted =
         instance->page_type == FlexPageTypeSecure ||
         (instance->page_type == FlexPageTypeAlphanumeric && !strncmp(message, "ALN: ", 5) &&
-         flex_text_looks_encrypted(message + 5));
+         flex_text_looks_encrypted(
+             message + 5, instance->page_suspect && instance->fragment <= 2U));
     if(instance->page_encrypted) instance->stats.pages_encrypted++;
     instance->page_duplicate = flex_seen_check(instance, hash);
     // Not fully decoded: a failed header checksum, or a joined message missing
