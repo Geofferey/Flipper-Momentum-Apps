@@ -294,6 +294,10 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             const float rssi = subghz_devices_get_rssi(app->txrx->radio_device);
             pcsg_receiver_rssi(app->pcsg_receiver, rssi);
             pcsg_freq_auto_tick(app, rssi);
+        } else {
+            // No RSSI to gate on here for the same reason; the FLEX4 path
+            // pauses sampling between frames to measure instead.
+            pcsg_freq_auto_tick(app, 0.0f);
         }
 
         if(app->txrx->txrx_state == PCSGTxRxStateRx) {

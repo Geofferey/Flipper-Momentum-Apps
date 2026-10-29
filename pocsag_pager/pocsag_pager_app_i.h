@@ -85,6 +85,8 @@ struct POCSAGPagerApp {
     int32_t freq_cal_sum_hz;
     uint16_t freq_cal_count;
     uint32_t freq_cal_tick;
+    // Last FLEX4 calibration pause, which is rarer than the apply interval.
+    uint32_t freq_cal_blip_tick;
 
     // Review Messages
     PCSGLog* log;

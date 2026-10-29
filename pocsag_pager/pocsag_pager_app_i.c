@@ -215,7 +215,13 @@ void pcsg_retune(POCSAGPagerApp* app) {
 #define PCSG_FREQ_AUTO_RSSI_MIN     (-80.0f)
 #define PCSG_FREQ_AUTO_MIN_SAMPLES  15U
 #define PCSG_FREQ_AUTO_INTERVAL_MS  3000U
-#define PCSG_FREQ_AUTO_DEADBAND_PPM 2
+// FLEX4 pauses sampling to measure, so it does so rarely and in one burst.
+#define PCSG_FREQ_AUTO_FLEX4_INTERVAL_MS 20000U
+#define PCSG_FREQ_AUTO_BURST             16U
+#define PCSG_FREQ_AUTO_BURST_GAP_MS      3U
+// One ppm is the finest correction the setting can express, so anything larger
+// would leave a standing error the loop refuses to act on.
+#define PCSG_FREQ_AUTO_DEADBAND_PPM 1
 
 /*
  * Closed-loop RX auto-calibration: while a signal is present, average the
@@ -224,12 +230,45 @@ void pcsg_retune(POCSAGPagerApp* app) {
  * tracks slow temperature drift. Only runs on POCSAG and two-level FLEX;
  * FLEX4 uses SPI-shared pins, so FREQEST cannot be read while it samples.
  */
+/*
+ * FLEX4 cannot read FREQEST while sampling, because the sampler owns the pin
+ * SPI needs for MISO. Pause it briefly between frames instead and burst-sample
+ * the estimate, which is enough for one averaging window, then resume. Only
+ * between frames, so no frame in progress is lost, and never while a raw
+ * capture is running, because restarting the sampler would start a new file.
+ */
+static void pcsg_freq_auto_flex4_blip(POCSAGPagerApp* app) {
+    if(app->filter.raw_capture) return;
+    if(flex_sampler_is_locked(app->txrx->flex_sampler)) return;
+
+    const uint32_t now = furi_get_tick();
+    if(app->freq_cal_blip_tick != 0 &&
+       now - app->freq_cal_blip_tick < furi_ms_to_ticks(PCSG_FREQ_AUTO_FLEX4_INTERVAL_MS)) {
+        return;
+    }
+    app->freq_cal_blip_tick = now;
+
+    flex_sampler_stop(app->txrx->flex_sampler);
+    // Spread the reads so the demodulator's estimate can move between them;
+    // identical back-to-back samples would average to no better resolution.
+    for(uint8_t i = 0; i < PCSG_FREQ_AUTO_BURST; i++) {
+        const int32_t hz = pcsg_freqest_read_hz(app);
+        if(hz != INT32_MIN) {
+            app->freq_cal_sum_hz += hz;
+            app->freq_cal_count++;
+        }
+        furi_delay_ms(PCSG_FREQ_AUTO_BURST_GAP_MS);
+    }
+    flex_sampler_start(app->txrx->flex_sampler);
+}
+
 void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi) {
     furi_assert(app);
     if(!app->filter.freq_auto || app->txrx->txrx_state != PCSGTxRxStateRx) return;
-    if(flex_sampler_is_running(app->txrx->flex_sampler)) return;
 
-    if(rssi > PCSG_FREQ_AUTO_RSSI_MIN) {
+    if(flex_sampler_is_running(app->txrx->flex_sampler)) {
+        pcsg_freq_auto_flex4_blip(app);
+    } else if(rssi > PCSG_FREQ_AUTO_RSSI_MIN) {
         const int32_t hz = pcsg_freqest_read_hz(app);
         if(hz != INT32_MIN) {
             app->freq_cal_sum_hz += hz;
@@ -244,9 +283,16 @@ void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi) {
     }
 
     const int32_t mean_hz = app->freq_cal_sum_hz / (int32_t)app->freq_cal_count;
-    const uint32_t freq_mhz = app->txrx->preset->frequency / 1000000U;
+    const int32_t freq_mhz = (int32_t)(app->txrx->preset->frequency / 1000000U);
     // Residual above the LO reads positive; raise the LO (more ppm) to center it.
-    const int32_t delta_ppm = freq_mhz ? mean_hz / (int32_t)freq_mhz : 0;
+    // Round to the nearest ppm rather than truncating: one ppm is 930 Hz at
+    // 929 MHz, so truncation discarded up to a whole ppm of the averaged
+    // estimate and left a correspondingly large standing error.
+    int32_t delta_ppm = 0;
+    if(freq_mhz > 0) {
+        const int32_t half = freq_mhz / 2;
+        delta_ppm = (mean_hz >= 0 ? mean_hz + half : mean_hz - half) / freq_mhz;
+    }
     app->freq_cal_sum_hz = 0;
     app->freq_cal_count = 0;
     app->freq_cal_tick = now;

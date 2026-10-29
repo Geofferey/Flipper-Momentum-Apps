@@ -14,6 +14,9 @@ void flex_sampler_start(FlexSampler* instance);
 void flex_sampler_stop(FlexSampler* instance);
 bool flex_sampler_is_running(const FlexSampler* instance);
 
+/** True while the decoder is locked onto a frame (cached; reads no registers). */
+bool flex_sampler_is_locked(const FlexSampler* instance);
+
 /** Record this receive session's raw sample stream to a timestamped file. */
 void flex_sampler_set_capture(FlexSampler* instance, bool enable);
 

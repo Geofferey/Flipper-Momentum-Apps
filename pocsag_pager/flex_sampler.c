@@ -559,3 +559,10 @@ bool flex_sampler_is_running(const FlexSampler* instance) {
     furi_assert(instance);
     return instance->running;
 }
+
+bool flex_sampler_is_locked(const FlexSampler* instance) {
+    furi_assert(instance);
+    // Cached by the sampler thread each pass; reading it costs no SPI, unlike
+    // asking the radio, so it is safe to poll while sampling.
+    return instance->running && instance->sound_gate;
+}
