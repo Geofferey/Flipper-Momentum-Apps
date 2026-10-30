@@ -382,6 +382,13 @@ void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi) {
     pcsg_settings_save(app);
 }
 
+static void pcsg_tx_release_encoder(POCSAGPagerApp* app) {
+    pocsag_tx_encoder_free(app->tx_encoder);
+    flex_tx_encoder_free(app->flex_tx_encoder);
+    app->tx_encoder = NULL;
+    app->flex_tx_encoder = NULL;
+}
+
 PCSGTxStartStatus pcsg_tx_start(POCSAGPagerApp* app) {
     furi_assert(app);
     if(app->txrx->txrx_state == PCSGTxRxStateRx) pcsg_rx_end(app);
@@ -400,11 +407,22 @@ PCSGTxStartStatus pcsg_tx_start(POCSAGPagerApp* app) {
 
     const bool flex = app->tx_config.protocol == PagerTxProtocolFlex;
     uint8_t* preset = pocsag_tx_get_preset(flex ? FLEX_TX_BAUD : app->tx_config.baud);
-    const bool prepared = flex ?
-                              flex_tx_encoder_prepare(app->flex_tx_encoder, &app->tx_config) :
-                              pocsag_tx_encoder_prepare(app->tx_encoder, &app->tx_config);
-    if(!preset || !prepared ||
-       !subghz_devices_is_frequency_valid(app->txrx->radio_device, tx_frequency)) {
+    if(!preset || !subghz_devices_is_frequency_valid(app->txrx->radio_device, tx_frequency)) {
+        return PCSGTxStartInvalid;
+    }
+
+    bool prepared;
+    if(flex) {
+        app->flex_tx_encoder = flex_tx_encoder_alloc();
+        prepared = app->flex_tx_encoder &&
+                   flex_tx_encoder_prepare(app->flex_tx_encoder, &app->tx_config);
+    } else {
+        app->tx_encoder = pocsag_tx_encoder_alloc();
+        prepared = app->tx_encoder &&
+                   pocsag_tx_encoder_prepare(app->tx_encoder, &app->tx_config);
+    }
+    if(!prepared) {
+        pcsg_tx_release_encoder(app);
         return PCSGTxStartInvalid;
     }
 
@@ -418,6 +436,7 @@ PCSGTxStartStatus pcsg_tx_start(POCSAGPagerApp* app) {
     void* tx_context = flex ? (void*)app->flex_tx_encoder : (void*)app->tx_encoder;
     if(!subghz_devices_start_async_tx(app->txrx->radio_device, tx_callback, tx_context)) {
         subghz_devices_idle(app->txrx->radio_device);
+        pcsg_tx_release_encoder(app);
         return PCSGTxStartRestricted;
     }
 
@@ -436,6 +455,7 @@ void pcsg_tx_stop(POCSAGPagerApp* app) {
     if(app->txrx->txrx_state != PCSGTxRxStateTx) return;
     subghz_devices_stop_async_tx(app->txrx->radio_device);
     subghz_devices_idle(app->txrx->radio_device);
+    pcsg_tx_release_encoder(app);
     app->txrx->txrx_state = PCSGTxRxStateIDLE;
 }
 

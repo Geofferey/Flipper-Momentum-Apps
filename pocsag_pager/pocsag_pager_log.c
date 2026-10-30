@@ -1,14 +1,14 @@
 #include "pocsag_pager_log.h"
 
 #include "pocsag_pager_history.h"
-#include "protocols/pcsg_generic.h"
 
 #include <storage/storage.h>
 
 #define TAG "PCSGLog"
 
 #define PCSG_LOG_READ_CHUNK  512U
-#define PCSG_LOG_LABEL_CACHE 8U
+#define PCSG_LOG_LABEL_CACHE 4U
+#define PCSG_LOG_LABEL_PREFIX 256U
 
 // Offsets live in 2 KB blocks allocated as lines are found, so no single
 // allocation is large and short logs stay small.
@@ -41,27 +41,24 @@ struct PCSGLog {
     PCSGLogLabel labels[PCSG_LOG_LABEL_CACHE];
     uint8_t label_next;
 
-    FlipperFormat* scratch;
-    FuriString* ric;
-    FuriString* message;
 };
 
 static uint32_t* pcsg_log_slot(PCSGLog* instance, uint32_t position) {
     uint32_t** block = &instance->blocks[position / PCSG_LOG_BLOCK_ENTRIES];
     if(!*block) *block = malloc(PCSG_LOG_BLOCK_ENTRIES * sizeof(uint32_t));
-    return &(*block)[position % PCSG_LOG_BLOCK_ENTRIES];
+    return *block ? &(*block)[position % PCSG_LOG_BLOCK_ENTRIES] : NULL;
 }
 
 static uint32_t pcsg_log_offset(PCSGLog* instance, uint16_t idx) {
-    return *pcsg_log_slot(instance, (instance->first + idx) % PCSG_LOG_MAX_ENTRIES);
+    const uint32_t position = (instance->first + idx) % PCSG_LOG_MAX_ENTRIES;
+    const uint32_t* block = instance->blocks[position / PCSG_LOG_BLOCK_ENTRIES];
+    return block ? block[position % PCSG_LOG_BLOCK_ENTRIES] : instance->file_size;
 }
 
 PCSGLog* pcsg_log_alloc(void) {
     PCSGLog* instance = calloc(1, sizeof(PCSGLog));
     instance->storage = furi_record_open(RECORD_STORAGE);
     instance->file = storage_file_alloc(instance->storage);
-    instance->ric = furi_string_alloc();
-    instance->message = furi_string_alloc();
     return instance;
 }
 
@@ -70,9 +67,6 @@ void pcsg_log_free(PCSGLog* instance) {
     pcsg_log_close(instance);
     storage_file_free(instance->file);
     furi_record_close(RECORD_STORAGE);
-    if(instance->scratch) flipper_format_free(instance->scratch);
-    furi_string_free(instance->ric);
-    furi_string_free(instance->message);
     free(instance);
 }
 
@@ -88,7 +82,6 @@ void pcsg_log_close(PCSGLog* instance) {
     instance->count = 0;
     instance->truncated = false;
     memset(instance->labels, 0, sizeof(instance->labels));
-    pcsg_log_release_view_data(instance);
 }
 
 bool pcsg_log_is_open(PCSGLog* instance) {
@@ -119,6 +112,10 @@ bool pcsg_log_open(PCSGLog* instance, const char* path) {
     // Record where each line starts. Past the cap, keep the newest lines as a
     // ring that starts at the oldest kept line.
     uint8_t* chunk = malloc(PCSG_LOG_READ_CHUNK);
+    if(!chunk) {
+        pcsg_log_close(instance);
+        return false;
+    }
     uint32_t position = 0;
     uint32_t line_start = 0;
     uint32_t lines = 0;
@@ -127,7 +124,13 @@ bool pcsg_log_open(PCSGLog* instance, const char* path) {
         for(size_t i = 0; i < read; i++) {
             if(chunk[i] != '\n') continue;
             if(position + i > line_start) {
-                *pcsg_log_slot(instance, lines % PCSG_LOG_MAX_ENTRIES) = line_start;
+                uint32_t* slot = pcsg_log_slot(instance, lines % PCSG_LOG_MAX_ENTRIES);
+                if(!slot) {
+                    free(chunk);
+                    pcsg_log_close(instance);
+                    return false;
+                }
+                *slot = line_start;
                 lines++;
             }
             line_start = position + i + 1U;
@@ -147,14 +150,16 @@ bool pcsg_log_open(PCSGLog* instance, const char* path) {
     return true;
 }
 
-// Read message idx into a malloc'd, NUL-terminated buffer.
-static char* pcsg_log_read_line(PCSGLog* instance, uint16_t idx) {
+// Read message idx into a malloc'd, NUL-terminated buffer, optionally only
+// taking its prefix for list labels.
+static char* pcsg_log_read_line(PCSGLog* instance, uint16_t idx, uint32_t limit) {
     if(!instance->open || idx >= instance->count) return NULL;
     const uint32_t start = pcsg_log_offset(instance, idx);
     uint32_t length = instance->file_size - start;
-    if(length > PCSG_HISTORY_MAX_LINE) length = PCSG_HISTORY_MAX_LINE;
+    if(length > limit) length = limit;
 
     char* buffer = malloc(length + 1U);
+    if(!buffer) return NULL;
     size_t read = 0;
     if(storage_file_seek(instance->file, start, true)) {
         read = storage_file_read(instance->file, buffer, length);
@@ -180,43 +185,37 @@ void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label) {
     slot->idx = idx;
     slot->label[0] = '\0';
 
-    char* line = pcsg_log_read_line(instance, idx);
+    char* line = pcsg_log_read_line(instance, idx, PCSG_LOG_LABEL_PREFIX - 1U);
     char* fields[PCSGLogFieldCount];
     if(line && pcsg_history_split_line(line, fields)) {
         // HH:MM from HH:MM:SS, then the same label the receiver list shows.
         const size_t time_length = strnlen(fields[PCSGLogFieldTime], 5);
         memcpy(slot->label, fields[PCSGLogFieldTime], time_length);
         slot->label[time_length] = ' ';
-        pcsg_block_generic_unescape(instance->ric, fields[PCSGLogFieldRic]);
-        pcsg_block_generic_unescape(instance->message, fields[PCSGLogFieldMessage]);
-        pcsg_history_make_label(
+        pcsg_history_make_label_escaped(
             slot->label + time_length + 1U,
             sizeof(slot->label) - time_length - 1U,
-            furi_string_get_cstr(instance->ric),
-            furi_string_get_cstr(instance->message));
+            fields[PCSGLogFieldRic],
+            fields[PCSGLogFieldMessage]);
     }
     free(line);
     furi_string_set_str(label, slot->label);
 }
 
-FlipperFormat* pcsg_log_get_entry(PCSGLog* instance, uint16_t idx) {
+bool pcsg_log_get_entry(PCSGLog* instance, uint16_t idx, PCSGHistoryEntry* entry) {
     furi_assert(instance);
-    FlipperFormat* result = NULL;
-    if(!instance->scratch) instance->scratch = flipper_format_string_alloc();
-    char* line = pcsg_log_read_line(instance, idx);
+    furi_assert(entry);
+    memset(entry, 0, sizeof(*entry));
+    bool result = false;
+    char* line = pcsg_log_read_line(instance, idx, PCSG_HISTORY_MAX_LINE);
     char* fields[PCSGLogFieldCount];
-    if(line && pcsg_history_split_line(line, fields) &&
-       pcsg_history_fields_to_flipper(fields, instance->scratch)) {
-        result = instance->scratch;
+    if(line && pcsg_history_split_line(line, fields)) {
+        entry->data = line;
+        entry->ric = fields[PCSGLogFieldRic];
+        entry->message = fields[PCSGLogFieldMessage];
+        result = true;
+    } else {
+        free(line);
     }
-    free(line);
     return result;
-}
-
-void pcsg_log_release_view_data(PCSGLog* instance) {
-    furi_assert(instance);
-    if(instance->scratch) {
-        flipper_format_free(instance->scratch);
-        instance->scratch = NULL;
-    }
 }

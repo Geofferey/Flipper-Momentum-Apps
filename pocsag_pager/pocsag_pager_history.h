@@ -4,7 +4,6 @@
 #include <math.h>
 #include <furi.h>
 #include <furi_hal.h>
-#include <lib/flipper_format/flipper_format.h>
 #include <lib/subghz/types.h>
 
 /*
@@ -36,11 +35,22 @@ typedef enum {
 /** Split a log line in place. Returns false if fields are missing. */
 bool pcsg_history_split_line(char* line, char* fields[PCSGLogFieldCount]);
 
-/** Copy split log fields into Protocol/Ric/Message for the info view. */
-bool pcsg_history_fields_to_flipper(char* const fields[PCSGLogFieldCount], FlipperFormat* output);
+/** Build a one-line list label directly from escaped log fields. */
+void pcsg_history_make_label_escaped(
+    char* label,
+    size_t size,
+    const char* ric,
+    const char* message);
 
-/** Build a one-line list label from an unescaped header and message. */
-void pcsg_history_make_label(char* label, size_t size, const char* ric, const char* message);
+/** One owned log line with pointers into its escaped Ric and Message fields. */
+typedef struct {
+    char* data;
+    const char* ric;
+    const char* message;
+} PCSGHistoryEntry;
+
+/** Release an entry returned by a history or saved-log lookup. */
+void pcsg_history_entry_free(PCSGHistoryEntry* entry);
 
 typedef struct PCSGHistory PCSGHistory;
 
@@ -130,17 +140,14 @@ PCSGHistoryStateAddKey
         SubGhzRadioPreset* preset,
         bool display);
 
-/** Read history[idx] back from the log file
+/** Read history[idx] back from the log file.
  *
  * @param instance  - PCSGHistory instance
  * @param idx       - record index
- * @return Protocol, Ric and Message as FlipperFormat, valid until the next
- *         call, or NULL if the log could not be read
+ * @param entry     - owned escaped header/message, freed with pcsg_history_entry_free
+ * @return true if the entry was read
  */
-FlipperFormat* pcsg_history_get_raw_data(PCSGHistory* instance, uint16_t idx);
-
-/** Free the message-sized buffer used by the live info view. */
-void pcsg_history_release_view_data(PCSGHistory* instance);
+bool pcsg_history_get_entry(PCSGHistory* instance, uint16_t idx, PCSGHistoryEntry* entry);
 
 /** Read the FLEX CAP or POCSAG RIC from a viewable history entry. */
 bool pcsg_history_get_address(

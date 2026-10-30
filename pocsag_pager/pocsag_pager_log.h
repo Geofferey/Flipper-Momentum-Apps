@@ -1,7 +1,7 @@
 #pragma once
 
 #include <furi.h>
-#include <lib/flipper_format/flipper_format.h>
+#include "pocsag_pager_history.h"
 
 /** Read-only view of a saved session log for Review Messages. */
 typedef struct PCSGLog PCSGLog;
@@ -29,8 +29,5 @@ bool pcsg_log_is_truncated(PCSGLog* instance);
 /** List label for a message: receive time, then the history label. */
 void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label);
 
-/** Protocol/Ric/Message for the info view, valid until the next call. */
-FlipperFormat* pcsg_log_get_entry(PCSGLog* instance, uint16_t idx);
-
-/** Free the message-sized buffer used by the review info view. */
-void pcsg_log_release_view_data(PCSGLog* instance);
+/** Escaped header/message for the info view; caller frees the returned entry. */
+bool pcsg_log_get_entry(PCSGLog* instance, uint16_t idx, PCSGHistoryEntry* entry);

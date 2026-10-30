@@ -45,12 +45,11 @@ void pocsag_pager_scene_receiver_info_on_enter(void* context) {
 
     subghz_receiver_set_rx_callback(
         app->txrx->receiver, pocsag_pager_scene_receiver_info_add_to_history_callback, app);
-    FlipperFormat* entry =
-        pcsg_history_get_raw_data(app->txrx->history, app->txrx->idx_menu_chosen);
-    if(entry) pcsg_view_receiver_info_update(app->pcsg_receiver_info, entry);
-    // The view owns its decoded text now; release the full-message transport
-    // copy before its line cache is allocated on the first draw.
-    pcsg_history_release_view_data(app->txrx->history);
+    PCSGHistoryEntry entry;
+    if(pcsg_history_get_entry(app->txrx->history, app->txrx->idx_menu_chosen, &entry)) {
+        pcsg_view_receiver_info_update(app->pcsg_receiver_info, entry.ric, entry.message);
+        pcsg_history_entry_free(&entry);
+    }
     view_dispatcher_switch_to_view(app->view_dispatcher, POCSAGPagerViewReceiverInfo);
 }
 
@@ -63,6 +62,5 @@ bool pocsag_pager_scene_receiver_info_on_event(void* context, SceneManagerEvent 
 }
 
 void pocsag_pager_scene_receiver_info_on_exit(void* context) {
-    POCSAGPagerApp* app = context;
-    pcsg_history_release_view_data(app->txrx->history);
+    UNUSED(context);
 }

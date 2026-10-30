@@ -270,12 +270,7 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     app->tx_config.frequency_correction_hz = 0;
     pcsg_settings_load(app);
 
-    app->tx_encoder = pocsag_tx_encoder_alloc();
-    app->flex_tx_encoder = flex_tx_encoder_alloc();
-
     app->txrx->history = pcsg_history_alloc();
-    app->log = pcsg_log_alloc();
-    app->log_path = furi_string_alloc();
     app->txrx->worker = subghz_worker_alloc();
     app->txrx->environment = subghz_environment_alloc();
     subghz_environment_set_protocol_registry(
@@ -351,8 +346,8 @@ void pocsag_pager_app_free(POCSAGPagerApp* app) {
     subghz_receiver_free(app->txrx->receiver);
     subghz_environment_free(app->txrx->environment);
     pcsg_history_free(app->txrx->history);
-    pcsg_log_free(app->log);
-    furi_string_free(app->log_path);
+    if(app->log) pcsg_log_free(app->log);
+    if(app->log_path) furi_string_free(app->log_path);
     subghz_worker_free(app->txrx->worker);
     pocsag_tx_encoder_free(app->tx_encoder);
     flex_tx_encoder_free(app->flex_tx_encoder);

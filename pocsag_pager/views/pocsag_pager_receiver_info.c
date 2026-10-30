@@ -59,9 +59,13 @@ static void pcsg_view_receiver_info_append_unescaped(FuriString* output, const c
     }
 }
 
-void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, FlipperFormat* fff) {
+void pcsg_view_receiver_info_update(
+    PCSGReceiverInfo* pcsg_receiver_info,
+    const char* ric,
+    const char* message) {
     furi_assert(pcsg_receiver_info);
-    furi_assert(fff);
+    furi_assert(ric);
+    furi_assert(message);
 
     with_view_model(
         pcsg_receiver_info->view,
@@ -72,18 +76,10 @@ void pcsg_view_receiver_info_update(PCSGReceiverInfo* pcsg_receiver_info, Flippe
             free(model->line_offsets);
             model->line_offsets = NULL;
             model->layout_ready = false;
-            FuriString* raw = furi_string_alloc();
-            if(flipper_format_rewind(fff) && flipper_format_read_string(fff, "Ric", raw)) {
-                pcsg_view_receiver_info_append_unescaped(
-                    model->text, furi_string_get_cstr(raw));
-                furi_string_trim(model->text, "\n");
-                furi_string_push_back(model->text, '\n');
-                if(flipper_format_read_string(fff, "Message", raw)) {
-                    pcsg_view_receiver_info_append_unescaped(
-                        model->text, furi_string_get_cstr(raw));
-                }
-            }
-            furi_string_free(raw);
+            pcsg_view_receiver_info_append_unescaped(model->text, ric);
+            furi_string_trim(model->text, "\n");
+            furi_string_push_back(model->text, '\n');
+            pcsg_view_receiver_info_append_unescaped(model->text, message);
             model->scroll = 0;
             model->lines = 0;
         },

@@ -7,6 +7,17 @@
 // Review Messages: pick a saved session log, then browse it in the receiver
 // list. The log stays open while a message is shown and closes on Back.
 
+static void pocsag_pager_scene_review_free(POCSAGPagerApp* app) {
+    if(app->log) {
+        pcsg_log_free(app->log);
+        app->log = NULL;
+    }
+    if(app->log_path) {
+        furi_string_free(app->log_path);
+        app->log_path = NULL;
+    }
+}
+
 static void pocsag_pager_scene_review_callback(PCSGCustomEvent event, void* context) {
     furi_assert(context);
     POCSAGPagerApp* app = context;
@@ -71,8 +82,14 @@ static void pocsag_pager_scene_review_update_statusbar(POCSAGPagerApp* app) {
 void pocsag_pager_scene_review_on_enter(void* context) {
     POCSAGPagerApp* app = context;
 
+    if(!app->log) {
+        app->log = pcsg_log_alloc();
+        app->log_path = furi_string_alloc();
+    }
+
     if(!pcsg_log_is_open(app->log)) {
         if(!pocsag_pager_scene_review_pick_log(app)) {
+            pocsag_pager_scene_review_free(app);
             scene_manager_previous_scene(app->scene_manager);
             return;
         }
@@ -100,7 +117,8 @@ bool pocsag_pager_scene_review_on_event(void* context, SceneManagerEvent event) 
         scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneReviewInfo);
         return true;
     } else if(event.event == PCSGCustomEventViewReceiverBack) {
-        pcsg_log_close(app->log);
+        pcsg_view_receiver_set_item_callback(app->pcsg_receiver, NULL, NULL);
+        pocsag_pager_scene_review_free(app);
         scene_manager_previous_scene(app->scene_manager);
         return true;
     }
