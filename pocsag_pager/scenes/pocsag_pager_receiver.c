@@ -22,21 +22,6 @@ static const NotificationSequence subghs_sequence_rx = {
     NULL,
 };
 
-static const NotificationSequence subghs_sequence_rx_locked = {
-    &message_display_backlight_on,
-
-    &message_vibro_on,
-    &message_note_c6,
-    &message_delay_50,
-    &message_sound_off,
-    &message_vibro_off,
-
-    &message_delay_500,
-
-    &message_display_backlight_off,
-    NULL,
-};
-
 static const NotificationSequence pcsg_sequence_rx_sound = {
     &message_note_c6,
     &message_delay_50,
@@ -55,33 +40,6 @@ static const NotificationSequence pcsg_sequence_rx_vibro = {
 
 static const NotificationSequence pcsg_sequence_rx_silent = {
     &message_delay_50,
-    NULL,
-};
-
-static const NotificationSequence pcsg_sequence_rx_sound_locked = {
-    &message_display_backlight_on,
-    &message_note_c6,
-    &message_delay_50,
-    &message_sound_off,
-    &message_delay_500,
-    &message_display_backlight_off,
-    NULL,
-};
-
-static const NotificationSequence pcsg_sequence_rx_vibro_locked = {
-    &message_display_backlight_on,
-    &message_vibro_on,
-    &message_delay_50,
-    &message_vibro_off,
-    &message_delay_500,
-    &message_display_backlight_off,
-    NULL,
-};
-
-static const NotificationSequence pcsg_sequence_rx_silent_locked = {
-    &message_display_backlight_on,
-    &message_delay_500,
-    &message_display_backlight_off,
     NULL,
 };
 
@@ -135,22 +93,16 @@ static void pocsag_pager_scene_receiver_time_sync(POCSAGPagerApp* app) {
         timing.frame);
 }
 
-// New-message notification for the Alert setting; locked variants also wake
-// the backlight briefly.
+// Message alerts use sound/vibration only; reception never wakes the backlight.
 static const NotificationSequence* pocsag_pager_scene_receiver_alert(POCSAGPagerApp* app) {
-    const bool locked = app->lock == PCSGLockOn;
     switch(app->filter.alert) {
     case PCSGAlertSound:
-        if(locked) return &pcsg_sequence_rx_sound_locked;
         return &pcsg_sequence_rx_sound;
     case PCSGAlertVibro:
-        if(locked) return &pcsg_sequence_rx_vibro_locked;
         return &pcsg_sequence_rx_vibro;
     case PCSGAlertOff:
-        if(locked) return &pcsg_sequence_rx_silent_locked;
         return &pcsg_sequence_rx_silent;
     default:
-        if(locked) return &subghs_sequence_rx_locked;
         return &subghs_sequence_rx;
     }
 }
