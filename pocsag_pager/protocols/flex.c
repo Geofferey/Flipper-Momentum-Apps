@@ -1285,12 +1285,12 @@ static bool flex_repair_page(
 static void flex_decode_phase(
     SubGhzProtocolDecoderFlex* instance,
     uint32_t words[FLEX_PHASE_WORDS],
-    char phase) {
-    bool valid[FLEX_PHASE_WORDS];
-    bool chased[FLEX_PHASE_WORDS];
+    char phase,
+    uint8_t received_words) {
+    bool valid[FLEX_PHASE_WORDS] = {false};
+    bool chased[FLEX_PHASE_WORDS] = {false};
     const uint8_t phase_index = (uint8_t)((phase - 'A') & 0x03);
-    for(uint8_t i = 0; i < FLEX_PHASE_WORDS; i++) {
-        chased[i] = false;
+    for(uint8_t i = 0; i < received_words; i++) {
         valid[i] = flex_bch_correct(&words[i]) >= 0;
         // Weak Decode: when hard BCH fails, soft-correct using the DPLL vote
         // margins carried for this word. Checksum-gated downstream, so a wrong
@@ -1329,6 +1329,7 @@ static void flex_decode_phase(
 
     for(uint8_t address_index = address_offset; address_index < vector_offset; address_index++) {
         const uint8_t vector_index = vector_offset + address_index - address_offset;
+        if(vector_index >= received_words) break;
         if(!valid[address_index] || !valid[vector_index]) {
             instance->stats.pages_bad_header++;
             continue;
@@ -1349,7 +1350,7 @@ static void flex_decode_phase(
             const uint8_t second = ++address_index;
             long_data_index = vector_index + 1U;
             if(second >= vector_offset || !valid[second] ||
-               long_data_index >= FLEX_PHASE_WORDS) {
+               long_data_index >= received_words) {
                 instance->stats.pages_bad_header++;
                 continue;
             }
@@ -1414,10 +1415,14 @@ static void flex_decode_phase(
         // so the message field is one word shorter than the length says.
         const uint8_t field_words = (alpha && long_address && length) ? length - 1U : length;
         uint16_t last = first + field_words - 1U;
-        if(length == 0 || (field_words && last >= FLEX_PHASE_WORDS)) {
+        if(length == 0 || length > FLEX_PHASE_WORDS ||
+           (field_words && last >= FLEX_PHASE_WORDS)) {
             instance->stats.pages_bad_range++;
             continue;
         }
+
+        // Unreceived words must never enter Chase or multi-copy repair.
+        if(field_words && last >= received_words) continue;
 
         // OR the message's source words into the Weak Decode marker.
         for(uint16_t i = first; i <= last && i < FLEX_PHASE_WORDS; i++) {
@@ -1517,16 +1522,38 @@ static void flex_decode_phase(
     }
 }
 
-static void flex_decode_data(SubGhzProtocolDecoderFlex* instance) {
+static void flex_decode_data(SubGhzProtocolDecoderFlex* instance, uint8_t received_words) {
     // Copy the frame mode so the phase selection survives a callback that
     // resets the decoder.
     const uint16_t baud = instance->baud;
     const uint8_t levels = instance->levels;
-    flex_decode_phase(instance, instance->phase_a, 'A');
-    if(levels == 4U) flex_decode_phase(instance, instance->phase_b, 'B');
-    if(baud == 3200U) flex_decode_phase(instance, instance->phase_c, 'C');
-    if(baud == 3200U && levels == 4U) flex_decode_phase(instance, instance->phase_d, 'D');
+    flex_decode_phase(instance, instance->phase_a, 'A', received_words);
+    if(levels == 4U) flex_decode_phase(instance, instance->phase_b, 'B', received_words);
+    if(baud == 3200U) flex_decode_phase(instance, instance->phase_c, 'C', received_words);
+    if(baud == 3200U && levels == 4U) {
+        flex_decode_phase(instance, instance->phase_d, 'D', received_words);
+    }
     flex_fragment_flush_expired(instance);
+}
+
+// Completed-block recovery follows Mayhem's handle_demod_unlock():
+// https://github.com/Geofferey/mayhem-firmware/commit/61ff51e80ce07afbf79ed1f42520f305b2822f9e
+static void flex_recover_complete_blocks(SubGhzProtocolDecoderFlex* instance) {
+    if(instance->state != FlexDecoderStateData) return;
+    instance->stats.frames_interrupted++;
+    const uint8_t blocks = MIN(instance->data_bit_count / 256U, 10U);
+    // Consume the interrupted frame before any callback can reset it again.
+    instance->state = FlexDecoderStateSync1;
+    if(!blocks) return;
+    instance->stats.frames_partial++;
+    flex_decode_data(instance, blocks * 8U);
+}
+
+void subghz_protocol_decoder_flex_handle_input_loss(void* context) {
+    furi_assert(context);
+    SubGhzProtocolDecoderFlex* instance = context;
+    flex_recover_complete_blocks(instance);
+    subghz_protocol_decoder_flex_reset(instance);
 }
 
 // Shift a reliability into the word's array to mirror the word's >>1 bit
@@ -1662,7 +1689,7 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t sym
         flex_read_data_symbol(instance, rectified_symbol);
         instance->data_count++;
         if(instance->data_count >= (instance->baud * FLEX_DATA_DURATION_MS) / 1000U) {
-            flex_decode_data(instance);
+            flex_decode_data(instance, FLEX_PHASE_WORDS);
             instance->stats.frames_completed++;
             instance->state = FlexDecoderStateSync1;
             instance->sync_buffer = 0;
@@ -1675,10 +1702,39 @@ static void flex_process_symbol(SubGhzProtocolDecoderFlex* instance, uint8_t sym
     }
 }
 
+// Check a DATA pulse before its guessed symbols can complete a block/frame.
+// Mirror the existing switch back to 1600 baud at the end of the frame.
+static bool flex_data_run_timing_valid(
+    const SubGhzProtocolDecoderFlex* instance,
+    uint32_t duration) {
+    int64_t remaining = (int64_t)duration * 2;
+    const uint16_t symbols_left =
+        (instance->baud * FLEX_DATA_DURATION_MS) / 1000U - instance->data_count;
+    uint16_t processed = 0;
+    while(processed < FLEX_MAX_RUN_SYMBOLS) {
+        const uint16_t period =
+            instance->baud == 3200U && processed < symbols_left ? 625U : 1250U;
+        if(remaining < period / 2U) break;
+        remaining -= period;
+        processed++;
+    }
+    const int32_t tolerance =
+        instance->baud == 3200U && processed < symbols_left ? 120 : 200;
+    return processed < FLEX_MAX_RUN_SYMBOLS && remaining >= -tolerance &&
+           remaining <= tolerance;
+}
+
 void subghz_protocol_decoder_flex_feed(void* context, bool level, uint32_t duration) {
     furi_assert(context);
     SubGhzProtocolDecoderFlex* instance = context;
     instance->four_level_path = false;
+
+    if(instance->state == FlexDecoderStateData &&
+       !flex_data_run_timing_valid(instance, duration)) {
+        flex_recover_complete_blocks(instance);
+        flex_return_to_sync(instance);
+        return;
+    }
 
     int32_t remaining_half_us = (int32_t)duration * 2;
     uint16_t processed = 0;

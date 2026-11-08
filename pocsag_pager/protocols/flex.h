@@ -11,6 +11,10 @@ typedef struct {
     /** Frame information words recovered by the opt-in soft decoder. */
     uint32_t fiw_chase;
     uint32_t frames_completed;
+    /** DATA frames cut short by timing failure or lost input samples. */
+    uint32_t frames_interrupted;
+    /** Interrupted frames with at least one complete block submitted to decoding. */
+    uint32_t frames_partial;
     uint32_t pages_decoded;
     /** Pages classified as secure or as opaque encrypted-looking text. */
     uint32_t pages_encrypted;
@@ -95,6 +99,8 @@ typedef struct {
 
 /** Feed one 4-FSK hard-decision sample (CC1101 RX_HARD_DATA[1:0]). */
 void subghz_protocol_decoder_flex_feed_4fsk_sample(void* context, uint8_t hard_symbol);
+/** Recover complete blocks after an input gap, then reset framing and sample timing. */
+void subghz_protocol_decoder_flex_handle_input_loss(void* context);
 /** Emit and clear every buffered fragmented message as the best available partial. */
 void subghz_protocol_decoder_flex_flush_fragments(void* context);
 void subghz_protocol_decoder_flex_reset_stats(void* context);

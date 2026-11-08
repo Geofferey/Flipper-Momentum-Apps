@@ -199,11 +199,11 @@ static void flex_stats_file_write(
     const size_t heap_free = memmgr_get_free_heap();
     const size_t heap_min = memmgr_get_minimum_free_heap();
     const size_t heap_block = memmgr_heap_get_max_free_block();
-    char buffer[768];
+    char buffer[832];
     const int length = snprintf(
         buffer,
         sizeof(buffer),
-        "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu\n"
+        "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu interrupted=%lu prefix=%lu page=%lu enc=%lu fix=%lu\n"
         "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu\n"
         "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu\n"
         "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n"
@@ -221,6 +221,8 @@ static void flex_stats_file_write(
         stats->fiw_invalid,
         stats->fiw_chase,
         stats->frames_completed,
+        stats->frames_interrupted,
+        stats->frames_partial,
         stats->pages_decoded,
         stats->pages_encrypted,
         stats->pages_repaired,
@@ -343,11 +345,12 @@ static int32_t flex_sampler_thread(void* context) {
             instance->tail = instance->head;
             instance->overrun = false;
             FURI_CRITICAL_EXIT();
-            instance->decoder->protocol->decoder->reset(instance->decoder);
+            subghz_protocol_decoder_flex_handle_input_loss(instance->decoder);
         }
 
         bool processed = false;
-        while(instance->tail != instance->head) {
+        // Stop before crossing an input gap; recover/reset at the top of the loop.
+        while(!instance->overrun && instance->tail != instance->head) {
             const uint8_t sample = flex_sampler_get(instance->samples, instance->tail);
             instance->tail = (instance->tail + 1U) & FLEX_SAMPLE_BUFFER_MASK;
             if(instance->last_symbol_valid && sample != instance->last_symbol) {
@@ -369,7 +372,7 @@ static int32_t flex_sampler_thread(void* context) {
             subghz_protocol_decoder_flex_get_stats(instance->decoder, &decoder_stats);
             FURI_LOG_I(
                 TAG,
-                "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu page=%lu enc=%lu fix=%lu",
+                "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu interrupted=%lu prefix=%lu page=%lu enc=%lu fix=%lu",
                 instance->sample_count,
                 (long)instance->freq_correction_ppm,
                 instance->symbol_count[0],
@@ -383,6 +386,8 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.fiw_invalid,
                 decoder_stats.fiw_chase,
                 decoder_stats.frames_completed,
+                decoder_stats.frames_interrupted,
+                decoder_stats.frames_partial,
                 decoder_stats.pages_decoded,
                 decoder_stats.pages_encrypted,
                 decoder_stats.pages_repaired);
