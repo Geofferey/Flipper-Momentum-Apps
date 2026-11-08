@@ -68,7 +68,7 @@ typedef enum {
     PCSGAlertCount,
 } PCSGAlert;
 
-/** RGB color used by the periodic receive indicator. */
+/** Shared indicator palette; append colors to preserve saved values. */
 typedef enum {
     PCSGLedColorCyan,
     PCSGLedColorBlue,
@@ -77,6 +77,13 @@ typedef enum {
     PCSGLedColorMagenta,
     PCSGLedColorRed,
     PCSGLedColorWhite,
+    PCSGLedColorAmber,
+    PCSGLedColorLime,
+    PCSGLedColorTeal,
+    PCSGLedColorSky,
+    PCSGLedColorViolet,
+    PCSGLedColorPink,
+    PCSGLedColorWarm,
     PCSGLedColorCount,
 } PCSGLedColor;
 
@@ -139,6 +146,7 @@ typedef struct {
     bool receive_led;
     PCSGLedColor receive_led_color;
     bool decode_led;
+    PCSGLedColor decode_led_color;
     // Set minute/second from fresh FLEX frame timing; date/hour stay local.
     bool time_sync;
     PCSGSound signal_sound;

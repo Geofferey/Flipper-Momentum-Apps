@@ -1,6 +1,7 @@
 #include "../pocsag_pager_app_i.h"
 #include "../views/pocsag_pager_receiver.h"
 #include "../protocols/flex.h"
+#include "../pocsag_pager_led.h"
 
 #include <datetime/datetime.h>
 #include <furi_hal_rtc.h>
@@ -83,34 +84,6 @@ static const NotificationSequence pcsg_sequence_rx_silent_locked = {
     &message_display_backlight_off,
     NULL,
 };
-
-static const NotificationSequence pcsg_sequence_blink_white_10 = {
-    &message_red_255,
-    &message_green_255,
-    &message_blue_255,
-    &message_delay_10,
-    NULL,
-};
-
-static const NotificationSequence* pocsag_pager_scene_receiver_led_color(PCSGLedColor color) {
-    switch(color) {
-    case PCSGLedColorBlue:
-        return &sequence_blink_blue_10;
-    case PCSGLedColorGreen:
-        return &sequence_blink_green_10;
-    case PCSGLedColorYellow:
-        return &sequence_blink_yellow_10;
-    case PCSGLedColorMagenta:
-        return &sequence_blink_magenta_10;
-    case PCSGLedColorRed:
-        return &sequence_blink_red_10;
-    case PCSGLedColorWhite:
-        return &pcsg_sequence_blink_white_10;
-    case PCSGLedColorCyan:
-    default:
-        return &sequence_blink_cyan_10;
-    }
-}
 
 static void pocsag_pager_scene_receiver_time_sync(POCSAGPagerApp* app) {
     if(!app->filter.time_sync || app->txrx->txrx_state != PCSGTxRxStateRx) return;
@@ -245,7 +218,8 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
     }
     if(state == PCSGHistoryStateAddKeyNewDada) {
         if(app->filter.decode_led) {
-            notification_message(app->notifications, &sequence_blink_green_10);
+            notification_message(
+                app->notifications, pcsg_led_blink_sequence(app->filter.decode_led_color));
         }
         notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
         app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
@@ -405,7 +379,7 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
         if(app->txrx->txrx_state == PCSGTxRxStateRx && app->filter.receive_led) {
             notification_message(
                 app->notifications,
-                pocsag_pager_scene_receiver_led_color(app->filter.receive_led_color));
+                pcsg_led_blink_sequence(app->filter.receive_led_color));
         }
     }
     return consumed;

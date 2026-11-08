@@ -12,7 +12,6 @@ enum PCSGSettingIndex {
     PCSGSettingIndexLogging,
     PCSGSettingIndexAlert,
     PCSGSettingIndexReceiveLed,
-    PCSGSettingIndexReceiveLedColor,
     PCSGSettingIndexDecodeLed,
     PCSGSettingIndexTimeSync,
     PCSGSettingIndexSignalSound,
@@ -95,7 +94,9 @@ const char* const led_toggle_text[LED_TOGGLE_COUNT] = {
     "On",
 };
 
-const char* const led_color_text[PCSGLedColorCount] = {
+#define LED_SELECTION_COUNT (PCSGLedColorCount + 1U)
+const char* const led_color_text[LED_SELECTION_COUNT] = {
+    "Off",
     "Cyan",
     "Blue",
     "Green",
@@ -103,6 +104,13 @@ const char* const led_color_text[PCSGLedColorCount] = {
     "Magenta",
     "Red",
     "White",
+    "Amber",
+    "Lime",
+    "Teal",
+    "Sky",
+    "Violet",
+    "Pink",
+    "Warm",
 };
 
 const char* const signal_sound_text[PCSGSoundCount] = {
@@ -380,22 +388,17 @@ static void pocsag_pager_scene_receiver_config_set_alert(VariableItem* item) {
 static void pocsag_pager_scene_receiver_config_set_receive_led(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     const uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, led_toggle_text[index]);
-    app->filter.receive_led = index == 1U;
-}
-
-static void pocsag_pager_scene_receiver_config_set_receive_led_color(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    const uint8_t index = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, led_color_text[index]);
-    app->filter.receive_led_color = index;
+    app->filter.receive_led = index != 0U;
+    if(index) app->filter.receive_led_color = index - 1U;
 }
 
 static void pocsag_pager_scene_receiver_config_set_decode_led(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     const uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, led_toggle_text[index]);
-    app->filter.decode_led = index == 1U;
+    variable_item_set_current_value_text(item, led_color_text[index]);
+    app->filter.decode_led = index != 0U;
+    if(index) app->filter.decode_led_color = index - 1U;
 }
 
 static void pocsag_pager_scene_receiver_config_set_time_sync(VariableItem* item) {
@@ -640,32 +643,22 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     item = variable_item_list_add(
         app->variable_item_list,
         "Receive LED:",
-        LED_TOGGLE_COUNT,
+        LED_SELECTION_COUNT,
         pocsag_pager_scene_receiver_config_set_receive_led,
         app);
-    value_index = app->filter.receive_led ? 1U : 0U;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, led_toggle_text[value_index]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "RX LED Color:",
-        PCSGLedColorCount,
-        pocsag_pager_scene_receiver_config_set_receive_led_color,
-        app);
-    value_index = app->filter.receive_led_color;
+    value_index = app->filter.receive_led ? app->filter.receive_led_color + 1U : 0U;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, led_color_text[value_index]);
 
     item = variable_item_list_add(
         app->variable_item_list,
         "Decode LED:",
-        LED_TOGGLE_COUNT,
+        LED_SELECTION_COUNT,
         pocsag_pager_scene_receiver_config_set_decode_led,
         app);
-    value_index = app->filter.decode_led ? 1U : 0U;
+    value_index = app->filter.decode_led ? app->filter.decode_led_color + 1U : 0U;
     variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, led_toggle_text[value_index]);
+    variable_item_set_current_value_text(item, led_color_text[value_index]);
 
     item = variable_item_list_add(
         app->variable_item_list,

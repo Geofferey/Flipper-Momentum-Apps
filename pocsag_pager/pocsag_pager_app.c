@@ -258,6 +258,7 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     app->filter.receive_led = true;
     app->filter.receive_led_color = PCSGLedColorCyan;
     app->filter.decode_led = true;
+    app->filter.decode_led_color = PCSGLedColorGreen;
     app->filter.tone_volume = PCSGToneVolumeMedium;
     app->filter.tone_pitch = PCSGTonePitchMedium;
     app->filter.tone_spread = PCSGToneSpreadNormal;

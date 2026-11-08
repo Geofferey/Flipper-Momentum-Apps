@@ -1,6 +1,7 @@
 #include "../pocsag_pager_app_i.h"
 #include "../views/pocsag_pager_receiver.h"
 #include "../protocols/flex.h"
+#include "../pocsag_pager_led.h"
 
 void pocsag_pager_scene_receiver_info_callback(PCSGCustomEvent event, void* context) {
     furi_assert(context);
@@ -33,7 +34,8 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
         }
         if(state == PCSGHistoryStateAddKeyNewDada) {
             if(app->filter.decode_led) {
-                notification_message(app->notifications, &sequence_blink_green_10);
+                notification_message(
+                    app->notifications, pcsg_led_blink_sequence(app->filter.decode_led_color));
             }
             app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
         }
