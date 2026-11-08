@@ -1318,6 +1318,12 @@ static void flex_decode_phase(
     }
     const uint32_t biw = words[0];
     if(biw == 0 || biw == 0x001FFFFFUL) return;
+    // Like Mayhem, check the corrected BIW before trusting its offsets:
+    // https://github.com/Geofferey/mayhem-firmware/commit/92ef8a27842a90c0f44ef6dab70924caa6caa375
+    if(!flex_word_checksum_valid(biw)) {
+        instance->stats.phases_bad_biw++;
+        return;
+    }
 
     const uint8_t vector_offset = (biw >> 10) & 0x3F;
     const uint8_t address_offset = ((biw >> 8) & 0x03) + 1U;

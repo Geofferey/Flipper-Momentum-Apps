@@ -44,7 +44,7 @@ typedef struct {
     uint32_t joined_sequence_gap;
     uint32_t joined_duplicate;
     uint32_t joined_signature_bad;
-    /** Phases dropped because the block information word failed BCH. */
+    /** Phases dropped because the BIW failed BCH/Chase or its checksum. */
     uint32_t phases_bad_biw;
     /** Pages skipped because the address or vector word failed BCH. */
     uint32_t pages_bad_header;

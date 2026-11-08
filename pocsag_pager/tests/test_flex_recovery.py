@@ -284,6 +284,83 @@ static void joined_fragments(void) {
     assert(!d->stats.pages_checksum_bad && !d->page_partial);
     subghz_protocol_decoder_flex_free(d); cases++;
 }
+
+static void biw_checksum_gate(void) {
+    uint32_t words[88];
+    const uint32_t good=checksum(2U<<10);
+    // All check nibbles are BCH-encoded: bad-check cases cannot be dismissed
+    // as uncorrectable words. Exercise full frames and recovered prefixes.
+    for(unsigned nibble=0;nibble<16;nibble++)
+    for(unsigned baud=1600;baud<=3200;baud+=1600)
+    for(unsigned levels=2;levels<=4;levels+=2)
+    for(unsigned weak=0;weak<2;weak++)
+    for(unsigned partial=0;partial<2;partial++) {
+        make_binary(words,7);
+        words[0]=encode((good&~15U)|nibble);
+        SubGhzProtocolDecoderFlex* d=begin(baud,levels,weak);
+        transmit(d,words,(partial?256:2816)*(baud==3200?2:1));
+        if(partial) subghz_protocol_decoder_flex_handle_input_loss(d);
+        bool valid=nibble==(good&15U);
+        assert(callbacks==(valid?phases(baud,levels):0));
+        assert(d->stats.phases_bad_biw==(valid?0:phases(baud,levels)));
+        assert(!d->stats.words_bad && !d->partial);
+        subghz_protocol_decoder_flex_free(d); cases++;
+    }
+    // Check after BCH correction, including errors in the check character.
+    for(unsigned errors=1;errors<=2;errors++)
+    for(unsigned partial=0;partial<2;partial++) {
+        make_binary(words,7);
+        words[0]^=errors==1?1U:0x401U;
+        SubGhzProtocolDecoderFlex* d=begin(1600,2,false);
+        transmit(d,words,partial?256:2816);
+        if(partial) subghz_protocol_decoder_flex_handle_input_loss(d);
+        assert(callbacks==1 && !d->stats.phases_bad_biw);
+        subghz_protocol_decoder_flex_free(d); cases++;
+    }
+    // Reject only the bad phase; a valid phase in the same frame survives.
+    make_binary(words,7);
+    SubGhzProtocolDecoderFlex* d=begin(1600,4,false);
+    transmit(d,words,256);
+    d->phase_a[0]=encode(good^1U);
+    subghz_protocol_decoder_flex_handle_input_loss(d);
+    assert(callbacks==1 && phase_mask==2 && d->stats.phases_bad_biw==1);
+    subghz_protocol_decoder_flex_free(d); cases++;
+
+    // Chase recovery is also subject to the check character. Find a
+    // three-bit error pattern recoverable from reliable untouched bits.
+    for(unsigned bad=0;bad<2;bad++) {
+        make_binary(words,7);
+        words[0]=encode(good^bad);
+        d=begin(1600,2,true); transmit(d,words,256);
+        bool found=false;
+        for(unsigned a=0;a<29 && !found;a++)
+        for(unsigned b=a+1;b<30 && !found;b++)
+        for(unsigned c=b+1;c<31 && !found;c++) {
+            uint32_t raw=words[0]^(1U<<a)^(1U<<b)^(1U<<c), trial=raw;
+            if(flex_bch_correct(&trial)>=0) continue;
+            memset(d->phase_rel,255,FLEX_REL_WORD);
+            d->phase_rel[a]=d->phase_rel[b]=d->phase_rel[c]=0;
+            trial=raw;
+            if(flex_bch_chase(&trial,d->phase_rel) && trial==words[0]) {
+                d->phase_a[0]=raw; found=true;
+            }
+        }
+        assert(found);
+        subghz_protocol_decoder_flex_handle_input_loss(d);
+        assert(d->stats.words_chase==1 && d->stats.phases_bad_biw==bad);
+        assert(callbacks==!bad);
+        subghz_protocol_decoder_flex_free(d); cases++;
+    }
+    // Preserve the existing silent treatment of idle BIWs.
+    for(unsigned ones=0;ones<2;ones++) {
+        make_binary(words,7); words[0]=encode(ones?0x1fffff:0);
+        d=begin(1600,2,false); transmit(d,words,256);
+        subghz_protocol_decoder_flex_handle_input_loss(d);
+        assert(!callbacks && !d->stats.phases_bad_biw);
+        subghz_protocol_decoder_flex_free(d); cases++;
+    }
+}
+
 static void pulse_timing_equivalence(void) {
     // Compare the preflight with the original timing loop at every end-of-frame
     // offset up to the 512-symbol cap, including its 3200 -> 1600 rate switch.
@@ -309,9 +386,9 @@ static void pulse_timing_equivalence(void) {
 }
 int main(void) {
     boundaries(); full_frames(); timing_loss(); ordinary_reset();
-    alpha_and_headers(); joined_fragments(); pulse_timing_equivalence();
+    alpha_and_headers(); joined_fragments(); biw_checksum_gate(); pulse_timing_equivalence();
     printf("PASS: %u recovery cases, all phase/rate modes, Weak Decode on/off, full frames,\n"
-           "timing failures, header bounds, alpha/joins, resets, and 1.2M pulse-timing comparisons.\n",cases);
+           "timing failures, header bounds, BIW checks, alpha/joins, resets, and 1.2M pulse-timing comparisons.\n",cases);
 }
 '''
 
