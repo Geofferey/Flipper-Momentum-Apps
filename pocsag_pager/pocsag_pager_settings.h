@@ -87,6 +87,14 @@ typedef enum {
     PCSGLedColorCount,
 } PCSGLedColor;
 
+/** TimeSync values 0/1 retain the old Off/On setting. */
+typedef enum {
+    PCSGTimeSyncOff,
+    PCSGTimeSyncMinuteSecond,
+    PCSGTimeSyncFull,
+    PCSGTimeSyncCount,
+} PCSGTimeSync;
+
 /** Signal sound while receiving; saved as SignalSound (1 was the old "On"). */
 typedef enum {
     PCSGSoundOff,
@@ -147,8 +155,8 @@ typedef struct {
     PCSGLedColor receive_led_color;
     bool decode_led;
     PCSGLedColor decode_led_color;
-    // Set minute/second from fresh FLEX frame timing; date/hour stay local.
-    bool time_sync;
+    // Sync MM:SS, or set HH:MM:SS once the network hour is known.
+    PCSGTimeSync time_sync;
     PCSGSound signal_sound;
     PCSGToneVolume tone_volume;
     PCSGTonePitch tone_pitch;

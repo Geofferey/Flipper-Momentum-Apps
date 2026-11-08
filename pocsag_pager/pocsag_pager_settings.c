@@ -260,8 +260,9 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
         if(flipper_format_read_uint32(file, "DecodeLed", &value, 1)) {
             filter->decode_led = value != 0;
         }
-        if(flipper_format_read_uint32(file, "TimeSync", &value, 1)) {
-            filter->time_sync = value != 0;
+        if(flipper_format_read_uint32(file, "TimeSync", &value, 1) &&
+           value < PCSGTimeSyncCount) {
+            filter->time_sync = value;
         }
         // Append new keys so older files retain the preceding settings.
         if(flipper_format_read_uint32(file, "DecodeLedColor", &value, 1) &&

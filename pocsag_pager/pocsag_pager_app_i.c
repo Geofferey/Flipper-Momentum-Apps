@@ -132,6 +132,10 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency) {
         }
     }
 
+    // RX is stopped here: discard timing from a previous channel/session only.
+    flex_sampler_reset_frame_timing(app->txrx->flex_sampler);
+    app->time_sync_sequence = 0;
+
     if(flex4) {
         flex_sampler_set_capture(app->txrx->flex_sampler, app->filter.raw_capture);
         flex_sampler_set_stats_log(app->txrx->flex_sampler, app->filter.stats_log);

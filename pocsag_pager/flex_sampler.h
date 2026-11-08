@@ -24,6 +24,9 @@ bool flex_sampler_is_locked(const FlexSampler* instance);
 /** Number of valid FLEX frames completed since the sampler was started. */
 uint32_t flex_sampler_completed_frames(const FlexSampler* instance);
 
+/** Clear cached timing with RX stopped before changing channel/session. */
+void flex_sampler_reset_frame_timing(FlexSampler* instance);
+
 /** Copy timing from the FLEX decoder shared by two- and four-level RX. */
 bool flex_sampler_get_frame_timing(const FlexSampler* instance, FlexFrameTiming* timing);
 

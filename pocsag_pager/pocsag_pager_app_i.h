@@ -110,6 +110,7 @@ void pcsg_get_frequency_modulation(
     FuriString* frequency,
     FuriString* modulation);
 bool pcsg_preset_is_flex4(const char* preset_name);
+void pcsg_time_sync(POCSAGPagerApp* app);
 void pcsg_begin(POCSAGPagerApp* app, uint8_t* preset_data);
 uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency);
 void pcsg_idle(POCSAGPagerApp* app);

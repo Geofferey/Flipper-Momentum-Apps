@@ -28,6 +28,11 @@
 #define FLEX_MAX_MESSAGE_CHARS 512U
 #define FLEX_TRUNCATION_MARK   "..."
 #define FLEX_NO_WORD           0xFFU
+// One byte for the hour and whether its two BIWs have arrived.
+#define FLEX_CLOCK_HOUR_MASK 0x1FU
+#define FLEX_CLOCK_HAVE_HOUR 0x20U
+#define FLEX_CLOCK_HAVE_ZONE 0x40U
+#define FLEX_CLOCK_STANDARD  0x80U
 #define FLEX_NUMERIC_MAX_WORDS 9U
 
 // Alphanumeric header word: checksum (bits 0-9), continuation (10), fragment
@@ -167,6 +172,7 @@ struct SubGhzProtocolDecoderFlex {
     volatile uint8_t timing_frame;
     volatile bool timing_valid;
     volatile bool timing_chase;
+    volatile uint8_t timing_clock;
 
     uint16_t sync2_count;
     uint16_t data_count;
@@ -273,15 +279,26 @@ static void flex_reset_clock(SubGhzProtocolDecoderFlex* instance) {
     memset(instance->clock_votes, 0, sizeof(instance->clock_votes));
 }
 
-static void flex_clear_timing(SubGhzProtocolDecoderFlex* instance) {
+void subghz_protocol_decoder_flex_reset_frame_timing(void* context) {
+    SubGhzProtocolDecoderFlex* instance = context;
     instance->timing_sequence++;
     instance->timing_valid = false;
+    instance->timing_clock = 0;
     instance->timing_sequence++;
 }
 
 static void flex_publish_timing(SubGhzProtocolDecoderFlex* instance) {
     instance->timing_sequence++;
-    instance->timing_tick = furi_get_tick();
+    const uint32_t now = furi_get_tick();
+    uint8_t clock = instance->timing_clock;
+    if(!instance->timing_valid || instance->frame_chase ||
+       now - instance->timing_tick >= furi_ms_to_ticks(3600000U)) {
+        clock = 0;
+    } else if((clock & FLEX_CLOCK_HAVE_HOUR) && instance->cycle < instance->timing_cycle) {
+        clock = (clock & ~FLEX_CLOCK_HOUR_MASK) | ((clock + 1U) & FLEX_CLOCK_HOUR_MASK) % 24U;
+    }
+    instance->timing_clock = clock;
+    instance->timing_tick = now;
     instance->timing_cycle = instance->cycle;
     instance->timing_frame = instance->frame;
     instance->timing_chase = instance->frame_chase;
@@ -333,7 +350,7 @@ void subghz_protocol_decoder_flex_reset(void* context) {
     SubGhzProtocolDecoderFlex* instance = context;
     flex_return_to_sync(instance);
     flex_reset_clock(instance);
-    flex_clear_timing(instance);
+    subghz_protocol_decoder_flex_reset_frame_timing(instance);
     instance->capcode = 0;
     instance->page_type = 0;
     instance->fragment = 0;
@@ -1281,6 +1298,35 @@ static bool flex_repair_page(
     return true;
 }
 
+// Hour and standard/daylight flag from Mayhem FLEX RX's BIW handling:
+// https://github.com/Geofferey/mayhem-firmware/blob/67345f64389694e45d1873587a0f052c4baed8e5/firmware/application/external/flex_rx/ui_flex_rx.cpp
+static void flex_decode_clock(
+    SubGhzProtocolDecoderFlex* instance,
+    const uint32_t* words,
+    const bool* valid,
+    const bool* chased,
+    uint8_t address_offset) {
+    if(!instance->timing_valid || instance->timing_chase || chased[0]) return;
+    uint8_t clock = instance->timing_clock;
+    for(uint8_t i = 1; i < address_offset; i++) {
+        if(!valid[i] || chased[i] || !flex_word_checksum_valid(words[i])) continue;
+        const uint32_t word = words[i];
+        const uint8_t type = (word >> 4) & 7U;
+        if(type == 2U) {
+            const uint8_t hour = (word >> 7) & 31U;
+            if(hour < 24U) clock = (clock & ~FLEX_CLOCK_HOUR_MASK) | hour | FLEX_CLOCK_HAVE_HOUR;
+        } else if(type == 5U && (((word >> 7) & 15U) == 4U || ((word >> 7) & 15U) == 5U)) {
+            clock = (clock & ~FLEX_CLOCK_STANDARD) | FLEX_CLOCK_HAVE_ZONE;
+            if(word & (1UL << 20)) clock |= FLEX_CLOCK_STANDARD;
+        }
+    }
+    if(clock != instance->timing_clock) {
+        instance->timing_sequence++;
+        instance->timing_clock = clock;
+        instance->timing_sequence++;
+    }
+}
+
 // Emits every page in the phase through the decoder callback.
 static void flex_decode_phase(
     SubGhzProtocolDecoderFlex* instance,
@@ -1327,6 +1373,7 @@ static void flex_decode_phase(
 
     const uint8_t vector_offset = (biw >> 10) & 0x3F;
     const uint8_t address_offset = ((biw >> 8) & 0x03) + 1U;
+    flex_decode_clock(instance, words, valid, chased, address_offset);
     if(vector_offset < address_offset ||
        (uint16_t)vector_offset + (uint16_t)(vector_offset - address_offset) >
            FLEX_PHASE_WORDS) {
@@ -1926,6 +1973,12 @@ bool subghz_protocol_decoder_flex_get_frame_timing(void* context, FlexFrameTimin
         timing->tick = instance->timing_tick;
         timing->sequence = before;
         timing->chase = instance->timing_chase;
+        const uint8_t clock = instance->timing_clock;
+        timing->hour = clock & FLEX_CLOCK_HOUR_MASK;
+        timing->clock_valid =
+            (clock & (FLEX_CLOCK_HAVE_HOUR | FLEX_CLOCK_HAVE_ZONE)) ==
+            (FLEX_CLOCK_HAVE_HOUR | FLEX_CLOCK_HAVE_ZONE);
+        timing->standard_time = (clock & FLEX_CLOCK_STANDARD) != 0;
         const bool valid = instance->timing_valid;
         const uint32_t after = instance->timing_sequence;
         if(before == after && !(after & 1U)) return valid;

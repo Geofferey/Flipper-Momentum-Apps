@@ -58,8 +58,7 @@ void pocsag_pager_scene_receiver_info_on_enter(void* context) {
 bool pocsag_pager_scene_receiver_info_on_event(void* context, SceneManagerEvent event) {
     POCSAGPagerApp* app = context;
     bool consumed = false;
-    UNUSED(app);
-    UNUSED(event);
+    if(event.type == SceneManagerEventTypeTick) pcsg_time_sync(app);
     return consumed;
 }
 

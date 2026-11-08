@@ -82,13 +82,20 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   blink can be disabled independently. Settings are saved to
   `/ext/apps_data/pocsag_pager/settings.txt` and restored at startup.
 
-**Time sync** uses the cycle and frame number from a fresh, BCH-validated FLEX
-frame to correct the Flipper's minute and second to the nearest hour. It keeps
-the existing date and approximate hour, converts the GPS-based frame schedule
-to UTC using the current 18-second offset, ignores soft-recovered FIWs, and
-only adjusts errors of at least two seconds. It cannot determine the date,
-timezone or absolute hour, so those must already be set approximately
-correctly. The option is Off by default.
+**Time sync** offers `Off` (default), `MM:SS`, and `HH:MM:SS`.
+`MM:SS` keeps the existing nearest-hour correction, including hour/date carry
+at a boundary. `HH:MM:SS` uses that correction until validated time and
+standard/daylight-time BIWs arrive, then sets the network's local hour too,
+preserving the current date when setting the full time. Both modes continue
+correcting during reception, including while a message is open; they are not
+limited to one correction per session. Existing saved `On` settings become
+`MM:SS`.
+
+Minutes and seconds come from fresh, BCH-validated cycle/frame timing with
+the 18-second GPS-to-UTC offset removed. Corrections smaller than two seconds
+are skipped. Soft-recovered FIWs and clock BIWs are excluded from RTC control.
+Full-time setting requires the network to broadcast both the hour and the
+standard/daylight flag; it does not set the date or a system timezone.
 
 Receiver settings and the transmitter protocol, frequency, address, function,
 baud, polarity and correction are saved on a clean app exit. Message text is
@@ -225,7 +232,11 @@ The cycle/frame clock uses the FLEX timing described in the
 frame, synchronized to GPS time. The GPS-to-UTC conversion uses the current
 18-second offset documented by the
 [U.S. Coast Guard Navigation Center](https://www.navcen.uscg.gov/sites/default/files/pdf/gps/geninfo/2020SPSPerformanceStandardFINAL.pdf).
-Optional FLEX accurate-seconds BIWs are not yet decoded.
+Hour and standard/daylight handling are adapted from Mayhem FLEX RX's
+[`network_hour`, `update_rtc`, and BIW handling](https://github.com/Geofferey/mayhem-firmware/blob/67345f64389694e45d1873587a0f052c4baed8e5/firmware/application/external/flex_rx/ui_flex_rx.cpp).
+The time BIW supplies the hour; SysInfo subtype 4/5 supplies the
+standard/daylight flag. The BIWs' coarse/accurate seconds are not used;
+continuous frame timing supplies the minutes and seconds.
 
 ## References for the FLEX transmitter
 
