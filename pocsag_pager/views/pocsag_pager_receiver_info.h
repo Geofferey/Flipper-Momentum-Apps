@@ -22,6 +22,14 @@ void pcsg_view_receiver_info_update(
     const char* ric,
     const char* message);
 
+/**
+ * Open the message at its end rather than its start, for one reached by
+ * scrolling backwards. Call after pcsg_view_receiver_info_update(), which
+ * resets the position; it takes effect on the next draw, once wrapping is
+ * known.
+ */
+void pcsg_view_receiver_info_scroll_to_end(PCSGReceiverInfo* pcsg_receiver_info);
+
 PCSGReceiverInfo* pcsg_view_receiver_info_alloc();
 
 void pcsg_view_receiver_info_free(PCSGReceiverInfo* pcsg_receiver_info);

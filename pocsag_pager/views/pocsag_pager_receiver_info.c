@@ -33,6 +33,10 @@ typedef struct {
     // pixel widths require a Canvas, then freed with the viewed message.
     uint16_t* line_offsets;
     bool layout_ready;
+    // Start at the bottom instead of the top, for a message reached by
+    // scrolling back into it. The line count needs a Canvas, so the position
+    // can only be resolved once the layout is cached on the first draw.
+    bool scroll_to_end;
     uint16_t scroll;
     uint16_t lines;
 } PCSGReceiverInfoModel;
@@ -93,7 +97,17 @@ void pcsg_view_receiver_info_update(
             pcsg_view_receiver_info_append_unescaped(model->text, message);
             model->scroll = 0;
             model->lines = 0;
+            model->scroll_to_end = false;
         },
+        true);
+}
+
+void pcsg_view_receiver_info_scroll_to_end(PCSGReceiverInfo* pcsg_receiver_info) {
+    furi_assert(pcsg_receiver_info);
+    with_view_model(
+        pcsg_receiver_info->view,
+        PCSGReceiverInfoModel * model,
+        { model->scroll_to_end = true; },
         true);
 }
 
@@ -163,6 +177,10 @@ void pcsg_view_receiver_info_draw(Canvas* canvas, PCSGReceiverInfoModel* model) 
     canvas_set_font(canvas, FontSecondary);
 
     if(!model->layout_ready) pcsg_view_receiver_info_cache_layout(canvas, model);
+    if(model->scroll_to_end) {
+        model->scroll = model->lines > INFO_LINES ? model->lines - INFO_LINES : 0;
+        model->scroll_to_end = false;
+    }
     const char* const text = furi_string_get_cstr(model->text);
     char line[INFO_LINE_CHARS];
     if(model->line_offsets) {
@@ -205,21 +223,26 @@ bool pcsg_view_receiver_info_input(InputEvent* event, void* context) {
     if((event->key == InputKeyUp || event->key == InputKeyDown) &&
        (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
         // A message already at its last line, or short enough to fit entirely,
-        // has nowhere left to scroll. Only a deliberate press moves on from
-        // there: holding Down scrolls to the end and stops, rather than
-        // running through the rest of the list.
-        bool at_end = false;
+        // has nowhere left to scroll; nor has one already at its first line.
+        // Only a deliberate press leaves the message from either edge, so
+        // holding the key scrolls to that edge and stops there rather than
+        // running on through the list.
+        PCSGCustomEvent request = 0;
         with_view_model(
             pcsg_receiver_info->view,
             PCSGReceiverInfoModel * model,
             {
-                if(event->key == InputKeyUp && model->scroll > 0) {
-                    model->scroll--;
-                } else if(event->key == InputKeyDown) {
+                if(event->key == InputKeyUp) {
+                    if(model->scroll > 0) {
+                        model->scroll--;
+                    } else if(event->type == InputTypeShort) {
+                        request = PCSGCustomEventViewInfoPrevMessage;
+                    }
+                } else {
                     if(model->scroll + INFO_LINES < model->lines) {
                         model->scroll++;
-                    } else {
-                        at_end = event->type == InputTypeShort;
+                    } else if(event->type == InputTypeShort) {
+                        request = PCSGCustomEventViewInfoNextMessage;
                     }
                 }
             },
@@ -228,9 +251,8 @@ bool pcsg_view_receiver_info_input(InputEvent* event, void* context) {
         // Kept outside with_view_model: the handler replaces the model's text
         // and layout, so it must not run under this lock even if a future
         // callback delivers the event synchronously instead of queueing it.
-        if(at_end && pcsg_receiver_info->callback) {
-            pcsg_receiver_info->callback(
-                PCSGCustomEventViewInfoNextMessage, pcsg_receiver_info->context);
+        if(request && pcsg_receiver_info->callback) {
+            pcsg_receiver_info->callback(request, pcsg_receiver_info->context);
         }
     }
 
