@@ -190,24 +190,43 @@ static void flex_stats_file_open(FlexStatsFile* stats_file, FlexSampler* instanc
     }
 }
 
+/*
+ * The four counter lines, shared by the SD stats file and the periodic log.
+ * GCC puts every function's literals in its own .rodata.<fn>.str1.1 section
+ * and a FAP is partially linked, so identical literals in two functions are
+ * never merged; naming them keeps exactly one copy of each. They carry no
+ * trailing newline because FURI_LOG adds its own.
+ */
+static const char flex_stats_fmt_sampler[] =
+    "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu interrupted=%lu prefix=%lu page=%lu enc=%lu fix=%lu";
+static const char flex_stats_fmt_words[] =
+    "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu";
+static const char flex_stats_fmt_phase[] =
+    "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu";
+static const char flex_stats_fmt_frag[] =
+    "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu";
+
 static void flex_stats_file_write(
     FlexStatsFile* stats_file,
     const FlexSampler* instance,
     const FlexDecoderStats* stats) {
     if(!stats_file->open) return;
 
-    const size_t heap_free = memmgr_get_free_heap();
-    const size_t heap_min = memmgr_get_minimum_free_heap();
-    const size_t heap_block = memmgr_heap_get_max_free_block();
     char buffer[832];
-    const int length = snprintf(
-        buffer,
-        sizeof(buffer),
-        "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu interrupted=%lu prefix=%lu page=%lu enc=%lu fix=%lu\n"
-        "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu\n"
-        "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu\n"
-        "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu\n"
-        "heap free/min/block=%lu/%lu/%lu\n\n",
+    size_t used = 0;
+
+    // Format one line at the cursor and terminate it, always keeping room for
+    // the newline so a truncated line cannot run the cursor off the buffer.
+#define FLEX_STATS_APPEND(fmt, ...)                                                  \
+    do {                                                                             \
+        if(used > sizeof(buffer) - 2U) used = sizeof(buffer) - 2U;                    \
+        const int written = snprintf(buffer + used, sizeof(buffer) - used, fmt, __VA_ARGS__); \
+        if(written > 0) used = MIN(used + (size_t)written, sizeof(buffer) - 2U);       \
+        buffer[used++] = '\n';                                                        \
+    } while(false)
+
+    FLEX_STATS_APPEND(
+        flex_stats_fmt_sampler,
         instance->sample_count,
         (long)instance->freq_correction_ppm,
         instance->symbol_count[0],
@@ -225,7 +244,9 @@ static void flex_stats_file_write(
         stats->frames_partial,
         stats->pages_decoded,
         stats->pages_encrypted,
-        stats->pages_repaired,
+        stats->pages_repaired);
+    FLEX_STATS_APPEND(
+        flex_stats_fmt_words,
         stats->words_total,
         stats->words_bad,
         stats->words_chase,
@@ -233,14 +254,18 @@ static void flex_stats_file_write(
         stats->phases_bad_biw,
         stats->pages_bad_header,
         stats->pages_long_address,
-        stats->pages_incomplete,
+        stats->pages_incomplete);
+    FLEX_STATS_APPEND(
+        flex_stats_fmt_phase,
         stats->words_bad_phase[0],
         stats->words_bad_phase[1],
         stats->words_bad_phase[2],
         stats->words_bad_phase[3],
         stats->pages_short_instruction,
         stats->pages_bad_range,
-        stats->pages_parse_failed,
+        stats->pages_parse_failed);
+    FLEX_STATS_APPEND(
+        flex_stats_fmt_frag,
         stats->fragments_first,
         stats->fragments_more,
         stats->fragments_last,
@@ -252,16 +277,22 @@ static void flex_stats_file_write(
         stats->joined_duplicate,
         stats->joined_checksum_rejected,
         stats->joined_signature_bad,
-        stats->pages_checksum_bad,
-        (unsigned long)heap_free,
-        (unsigned long)heap_min,
-        (unsigned long)heap_block);
-    if(length > 0) {
-        storage_file_write(
-            stats_file->file, buffer, MIN((size_t)length, sizeof(buffer) - 1U));
-        storage_file_sync(stats_file->file);
-        stats_file->last_write_tick = furi_get_tick();
-    }
+        stats->pages_checksum_bad);
+    FLEX_STATS_APPEND(
+        "heap free/min/block=%lu/%lu/%lu",
+        (unsigned long)memmgr_get_free_heap(),
+        (unsigned long)memmgr_get_minimum_free_heap(),
+        (unsigned long)memmgr_heap_get_max_free_block());
+
+#undef FLEX_STATS_APPEND
+
+    // Blank line between records.
+    if(used > sizeof(buffer) - 1U) used = sizeof(buffer) - 1U;
+    buffer[used++] = '\n';
+
+    storage_file_write(stats_file->file, buffer, used);
+    storage_file_sync(stats_file->file);
+    stats_file->last_write_tick = furi_get_tick();
 }
 
 static void flex_stats_file_close(FlexStatsFile* stats_file) {
@@ -372,7 +403,7 @@ static int32_t flex_sampler_thread(void* context) {
             subghz_protocol_decoder_flex_get_stats(instance->decoder, &decoder_stats);
             FURI_LOG_I(
                 TAG,
-                "n=%lu ppm=%ld h=%lu/%lu/%lu/%lu tr=%lu drop=%lu sync=%lu fiw=%lu/%lu soft=%lu frame=%lu interrupted=%lu prefix=%lu page=%lu enc=%lu fix=%lu",
+                flex_stats_fmt_sampler,
                 instance->sample_count,
                 (long)instance->freq_correction_ppm,
                 instance->symbol_count[0],
@@ -394,7 +425,7 @@ static int32_t flex_sampler_thread(void* context) {
             // Where pages are lost: word error rate, then each drop reason.
             FURI_LOG_I(
                 TAG,
-                "words=%lu bad=%lu soft=%lu pages_soft=%lu biw_bad=%lu hdr_bad=%lu long=%lu partial=%lu",
+                flex_stats_fmt_words,
                 decoder_stats.words_total,
                 decoder_stats.words_bad,
                 decoder_stats.words_chase,
@@ -405,7 +436,7 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.pages_incomplete);
             FURI_LOG_I(
                 TAG,
-                "bad A/B/C/D=%lu/%lu/%lu/%lu short=%lu range=%lu parse=%lu",
+                flex_stats_fmt_phase,
                 decoder_stats.words_bad_phase[0],
                 decoder_stats.words_bad_phase[1],
                 decoder_stats.words_bad_phase[2],
@@ -415,7 +446,7 @@ static int32_t flex_sampler_thread(void* context) {
                 decoder_stats.pages_parse_failed);
             FURI_LOG_I(
                 TAG,
-                "frag first/more/last=%lu/%lu/%lu joined=%lu orphan=%lu timeout=%lu stop=%lu gap=%lu dup=%lu kreject=%lu sigbad=%lu ksum_bad=%lu",
+                flex_stats_fmt_frag,
                 decoder_stats.fragments_first,
                 decoder_stats.fragments_more,
                 decoder_stats.fragments_last,

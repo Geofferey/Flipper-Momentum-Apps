@@ -3,6 +3,8 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <lib/flipper_format/flipper_format.h>
+#include <lib/flipper_format/flipper_format_i.h>
+#include <lib/toolbox/stream/stream.h>
 #include "protocols/protocol_items.h"
 #include "protocols/flex.h"
 
@@ -178,72 +180,84 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     subghz_devices_reset(app->txrx->radio_device);
     subghz_devices_idle(app->txrx->radio_device);
 
-    // Custom Presets load without using config file
-
-    FlipperFormat* temp_fm_preset = flipper_format_string_alloc();
-    flipper_format_write_string_cstr(
-        temp_fm_preset,
-        (const char*)"Custom_preset_data",
-        (const char*)"02 0D 0B 06 08 32 07 04 14 00 13 02 12 04 11 83 10 67 15 24 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
-    flipper_format_rewind(temp_fm_preset);
-    subghz_setting_load_custom_preset(app->setting, (const char*)"FM95", temp_fm_preset);
-
-    flipper_format_free(temp_fm_preset);
-
+    // Custom presets, loaded without a config file. These are CC1101 register
+    // pairs; subghz_setting_load_custom_preset() reads them back out of a
+    // Custom_preset_data value, so one scratch FlipperFormat is filled,
+    // consumed and cleaned for each preset in turn.
+    //
+    // FM95 gates the data output on carrier sense (MDMCFG2 0x04) and uses a
+    // 270 kHz channel filter (MDMCFG4 0x67).
+    static const uint8_t pcsg_preset_fm95[] = {
+        0x02, 0x0D, 0x0B, 0x06, 0x08, 0x32, 0x07, 0x04, 0x14, 0x00, 0x13, 0x02,
+        0x12, 0x04, 0x11, 0x83, 0x10, 0x67, 0x15, 0x24, 0x18, 0x18, 0x19, 0x16,
+        0x1D, 0x91, 0x1C, 0x00, 0x1B, 0x07, 0x20, 0xFB, 0x22, 0x10, 0x21, 0x56,
+        0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
     // POCSAG: two-level FSK with about +/-4.5 kHz deviation. Unlike FM95, no
     // carrier-sense gating of the data output (MDMCFG2 0x00) and a 58 kHz
     // channel filter instead of 270 kHz (MDMCFG4 0xF6, which also sets the
     // data rate to 2400 baud, the fastest POCSAG rate). POCSAG-W widens the
     // filter to 116 kHz (MDMCFG4 0xB6) for the crystal offset at 900 MHz.
-    FlipperFormat* temp_pocsag_preset = flipper_format_string_alloc();
-    flipper_format_write_string_cstr(
-        temp_pocsag_preset,
-        (const char*)"Custom_preset_data",
-        (const char*)"02 0D 0B 06 08 32 07 04 14 00 13 02 12 00 11 83 10 F6 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
-    flipper_format_rewind(temp_pocsag_preset);
-    subghz_setting_load_custom_preset(app->setting, (const char*)"POCSAG", temp_pocsag_preset);
-    flipper_format_free(temp_pocsag_preset);
+    static const uint8_t pcsg_preset_pocsag[] = {
+        0x02, 0x0D, 0x0B, 0x06, 0x08, 0x32, 0x07, 0x04, 0x14, 0x00, 0x13, 0x02,
+        0x12, 0x00, 0x11, 0x83, 0x10, 0xF6, 0x15, 0x1C, 0x18, 0x18, 0x19, 0x16,
+        0x1D, 0x91, 0x1C, 0x00, 0x1B, 0x07, 0x20, 0xFB, 0x22, 0x10, 0x21, 0x56,
+        0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    static const uint8_t pcsg_preset_pocsag_wide[] = {
+        0x02, 0x0D, 0x0B, 0x06, 0x08, 0x32, 0x07, 0x04, 0x14, 0x00, 0x13, 0x02,
+        0x12, 0x00, 0x11, 0x83, 0x10, 0xB6, 0x15, 0x1C, 0x18, 0x18, 0x19, 0x16,
+        0x1D, 0x91, 0x1C, 0x00, 0x1B, 0x07, 0x20, 0xFB, 0x22, 0x10, 0x21, 0x56,
+        0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    static const uint8_t pcsg_preset_flex[] = {
+        0x02, 0x0D, 0x0B, 0x06, 0x08, 0x32, 0x07, 0x04, 0x14, 0x00, 0x13, 0x02,
+        0x12, 0x00, 0x11, 0x83, 0x10, 0xF7, 0x15, 0x1C, 0x18, 0x18, 0x19, 0x16,
+        0x1D, 0x91, 0x1C, 0x00, 0x1B, 0x07, 0x20, 0xFB, 0x22, 0x10, 0x21, 0x56,
+        0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    // Four-level FLEX: synchronous serial mode (IOCFG2 0x0B/0x06), wider
+    // deviation (DEVIATN 0x40) and no Manchester, at 3200 or 6400 sps.
+    static const uint8_t pcsg_preset_flex4_3200[] = {
+        0x02, 0x16, 0x01, 0x17, 0x0B, 0x06, 0x08, 0x32, 0x07, 0x04, 0x14, 0x00,
+        0x13, 0x02, 0x12, 0x40, 0x11, 0x02, 0x10, 0xF7, 0x15, 0x1C, 0x18, 0x18,
+        0x19, 0x16, 0x1D, 0x91, 0x1C, 0x00, 0x1B, 0x07, 0x20, 0xFB, 0x22, 0x10,
+        0x21, 0x56, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    static const uint8_t pcsg_preset_flex4_6400[] = {
+        0x02, 0x16, 0x01, 0x17, 0x0B, 0x06, 0x08, 0x32, 0x07, 0x04, 0x14, 0x00,
+        0x13, 0x02, 0x12, 0x40, 0x11, 0x02, 0x10, 0xF8, 0x15, 0x1C, 0x18, 0x18,
+        0x19, 0x16, 0x1D, 0x91, 0x1C, 0x00, 0x1B, 0x07, 0x20, 0xFB, 0x22, 0x10,
+        0x21, 0x56, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
 
-    FlipperFormat* temp_pocsag_wide_preset = flipper_format_string_alloc();
-    flipper_format_write_string_cstr(
-        temp_pocsag_wide_preset,
-        (const char*)"Custom_preset_data",
-        (const char*)"02 0D 0B 06 08 32 07 04 14 00 13 02 12 00 11 83 10 B6 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
-    flipper_format_rewind(temp_pocsag_wide_preset);
-    subghz_setting_load_custom_preset(
-        app->setting, (const char*)"POCSAG-W", temp_pocsag_wide_preset);
-    flipper_format_free(temp_pocsag_wide_preset);
+    static const struct {
+        const char* name;
+        const uint8_t* data;
+        uint8_t size;
+    } pcsg_custom_presets[] = {
+        {"FM95", pcsg_preset_fm95, sizeof(pcsg_preset_fm95)},
+        {"POCSAG", pcsg_preset_pocsag, sizeof(pcsg_preset_pocsag)},
+        {"POCSAG-W", pcsg_preset_pocsag_wide, sizeof(pcsg_preset_pocsag_wide)},
+        {"FLEX", pcsg_preset_flex, sizeof(pcsg_preset_flex)},
+        {"FLEX4-3200", pcsg_preset_flex4_3200, sizeof(pcsg_preset_flex4_3200)},
+        {"FLEX4-6400", pcsg_preset_flex4_6400, sizeof(pcsg_preset_flex4_6400)},
+    };
 
-    FlipperFormat* temp_flex_preset = flipper_format_string_alloc();
-    flipper_format_write_string_cstr(
-        temp_flex_preset,
-        (const char*)"Custom_preset_data",
-        (const char*)"02 0D 0B 06 08 32 07 04 14 00 13 02 12 00 11 83 10 F7 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
-    flipper_format_rewind(temp_flex_preset);
-    subghz_setting_load_custom_preset(app->setting, (const char*)"FLEX", temp_flex_preset);
-    flipper_format_free(temp_flex_preset);
-
-    FlipperFormat* temp_flex4_preset = flipper_format_string_alloc();
-    flipper_format_write_string_cstr(
-        temp_flex4_preset,
-        (const char*)"Custom_preset_data",
-        (const char*)"02 16 01 17 0B 06 08 32 07 04 14 00 13 02 12 40 11 02 10 F7 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
-    flipper_format_rewind(temp_flex4_preset);
-    subghz_setting_load_custom_preset(
-        app->setting, (const char*)"FLEX4-3200", temp_flex4_preset);
-    flipper_format_free(temp_flex4_preset);
-
-    FlipperFormat* temp_flex4_6400_preset = flipper_format_string_alloc();
-    flipper_format_write_string_cstr(
-        temp_flex4_6400_preset,
-        (const char*)"Custom_preset_data",
-        (const char*)"02 16 01 17 0B 06 08 32 07 04 14 00 13 02 12 40 11 02 10 F8 15 1C 18 18 19 16 1D 91 1C 00 1B 07 20 FB 22 10 21 56 00 00 C0 00 00 00 00 00 00 00");
-    flipper_format_rewind(temp_flex4_6400_preset);
-    subghz_setting_load_custom_preset(
-        app->setting, (const char*)"FLEX4-6400", temp_flex4_6400_preset);
-    flipper_format_free(temp_flex4_6400_preset);
-
-    // custom presets loading - end
+    FlipperFormat* preset_scratch = flipper_format_string_alloc();
+    Stream* preset_stream = flipper_format_get_raw_stream(preset_scratch);
+    for(size_t i = 0; i < COUNT_OF(pcsg_custom_presets); i++) {
+        stream_clean(preset_stream);
+        flipper_format_write_hex(
+            preset_scratch,
+            "Custom_preset_data",
+            pcsg_custom_presets[i].data,
+            pcsg_custom_presets[i].size);
+        flipper_format_rewind(preset_scratch);
+        subghz_setting_load_custom_preset(
+            app->setting, pcsg_custom_presets[i].name, preset_scratch);
+    }
+    flipper_format_free(preset_scratch);
 
     pcsg_preset_init(app, "POCSAG", 439987500, NULL, 0);
 
