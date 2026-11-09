@@ -13,7 +13,18 @@
 
 struct PCSGReceiverInfo {
     View* view;
+    PCSGReceiverInfoCallback callback;
+    void* context;
 };
+
+void pcsg_view_receiver_info_set_callback(
+    PCSGReceiverInfo* pcsg_receiver_info,
+    PCSGReceiverInfoCallback callback,
+    void* context) {
+    furi_assert(pcsg_receiver_info);
+    pcsg_receiver_info->callback = callback;
+    pcsg_receiver_info->context = context;
+}
 
 typedef struct {
     // Header and message as plain text, word-wrapped when drawn.
@@ -193,18 +204,34 @@ bool pcsg_view_receiver_info_input(InputEvent* event, void* context) {
 
     if((event->key == InputKeyUp || event->key == InputKeyDown) &&
        (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
+        // A message already at its last line, or short enough to fit entirely,
+        // has nowhere left to scroll. Only a deliberate press moves on from
+        // there: holding Down scrolls to the end and stops, rather than
+        // running through the rest of the list.
+        bool at_end = false;
         with_view_model(
             pcsg_receiver_info->view,
             PCSGReceiverInfoModel * model,
             {
                 if(event->key == InputKeyUp && model->scroll > 0) {
                     model->scroll--;
-                } else if(
-                    event->key == InputKeyDown && model->scroll + INFO_LINES < model->lines) {
-                    model->scroll++;
+                } else if(event->key == InputKeyDown) {
+                    if(model->scroll + INFO_LINES < model->lines) {
+                        model->scroll++;
+                    } else {
+                        at_end = event->type == InputTypeShort;
+                    }
                 }
             },
             true);
+
+        // Kept outside with_view_model: the handler replaces the model's text
+        // and layout, so it must not run under this lock even if a future
+        // callback delivers the event synchronously instead of queueing it.
+        if(at_end && pcsg_receiver_info->callback) {
+            pcsg_receiver_info->callback(
+                PCSGCustomEventViewInfoNextMessage, pcsg_receiver_info->context);
+        }
     }
 
     return true;
@@ -240,6 +267,8 @@ void pcsg_view_receiver_info_exit(void* context) {
 
 PCSGReceiverInfo* pcsg_view_receiver_info_alloc() {
     PCSGReceiverInfo* pcsg_receiver_info = malloc(sizeof(PCSGReceiverInfo));
+    pcsg_receiver_info->callback = NULL;
+    pcsg_receiver_info->context = NULL;
 
     // View allocation and configuration
     pcsg_receiver_info->view = view_alloc();

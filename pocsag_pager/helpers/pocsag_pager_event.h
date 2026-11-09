@@ -23,4 +23,7 @@ typedef enum {
     PCSGCustomEventViewReceiverBack,
     PCSGCustomEventViewReceiverOffDisplay,
     PCSGCustomEventViewReceiverUnlock,
+
+    /** Scrolled past the end of the open message: show the next one. */
+    PCSGCustomEventViewInfoNextMessage,
 } PCSGCustomEvent;
