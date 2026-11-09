@@ -37,6 +37,7 @@ static void pocsag_pager_scene_receiver_info_add_to_history_callback(
                 notification_message(
                     app->notifications, pcsg_led_blink_sequence(app->filter.decode_led_color));
             }
+            pcsg_classic_alert_request(app);
             app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
         }
     }

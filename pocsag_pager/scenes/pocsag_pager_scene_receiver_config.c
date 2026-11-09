@@ -11,6 +11,7 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFlexPartial,
     PCSGSettingIndexLogging,
     PCSGSettingIndexAlert,
+    PCSGSettingIndexAlertTone,
     PCSGSettingIndexReceiveLed,
     PCSGSettingIndexDecodeLed,
     PCSGSettingIndexTimeSync,
@@ -86,6 +87,11 @@ const char* const alert_text[PCSGAlertCount] = {
     "Sound",
     "Vibro",
     "Off",
+};
+
+const char* const alert_tone_text[PCSGAlertToneCount] = {
+    "Default",
+    "Classic",
 };
 
 const char* const time_sync_text[PCSGTimeSyncCount] = {
@@ -383,6 +389,15 @@ static void pocsag_pager_scene_receiver_config_set_alert(VariableItem* item) {
     uint8_t index = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, alert_text[index]);
     app->filter.alert = index;
+    pcsg_classic_alert_reset(app);
+}
+
+static void pocsag_pager_scene_receiver_config_set_alert_tone(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, alert_tone_text[index]);
+    app->filter.alert_tone = index;
+    pcsg_classic_alert_reset(app);
 }
 
 static void pocsag_pager_scene_receiver_config_set_receive_led(VariableItem* item) {
@@ -640,6 +655,15 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         app);
     variable_item_set_current_value_index(item, app->filter.alert);
     variable_item_set_current_value_text(item, alert_text[app->filter.alert]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Alert Tone:",
+        PCSGAlertToneCount,
+        pocsag_pager_scene_receiver_config_set_alert_tone,
+        app);
+    variable_item_set_current_value_index(item, app->filter.alert_tone);
+    variable_item_set_current_value_text(item, alert_tone_text[app->filter.alert_tone]);
 
     item = variable_item_list_add(
         app->variable_item_list,

@@ -168,6 +168,7 @@ void pcsg_rx_end(POCSAGPagerApp* app) {
         subghz_worker_stop(app->txrx->worker);
         subghz_devices_stop_async_rx(app->txrx->radio_device);
     }
+    pcsg_classic_alert_reset(app);
     // Synth owns and releases the speaker inside the sampler thread, so sound
     // state must be cleared independently of the app-owned speaker flag.
     flex_sampler_set_sound(app->txrx->flex_sampler, FlexSamplerSoundOff, NULL, 0.0f, NULL);

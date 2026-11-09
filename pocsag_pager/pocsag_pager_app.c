@@ -21,6 +21,7 @@ static bool pocsag_pager_app_back_event_callback(void* context) {
 static void pocsag_pager_app_tick_event_callback(void* context) {
     furi_assert(context);
     POCSAGPagerApp* app = context;
+    pcsg_classic_alert_tick(app);
     scene_manager_handle_tick_event(app->scene_manager);
 }
 
@@ -86,6 +87,7 @@ static void pocsag_pager_app_create_frequency_file(void) {
 
 POCSAGPagerApp* pocsag_pager_app_alloc() {
     POCSAGPagerApp* app = calloc(1, sizeof(POCSAGPagerApp));
+    atomic_init(&app->classic_alert_pending, false);
 
     // GUI
     app->gui = furi_record_open(RECORD_GUI);
@@ -310,6 +312,8 @@ void pocsag_pager_app_free(POCSAGPagerApp* app) {
     radio_device_loader_end(app->txrx->radio_device);
 
     subghz_devices_deinit();
+
+    pcsg_classic_alert_free(app);
 
     // Submenu
     view_dispatcher_remove_view(app->view_dispatcher, POCSAGPagerViewSubmenu);

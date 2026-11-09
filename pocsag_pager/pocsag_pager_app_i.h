@@ -1,5 +1,8 @@
 #pragma once
 
+#include <stdatomic.h>
+#include <furi/core/event_loop_timer.h>
+
 #include "helpers/pocsag_pager_types.h"
 #include "helpers/radio_device_loader.h"
 
@@ -76,6 +79,12 @@ struct POCSAGPagerApp {
     // Config opened from the main menu rather than the receiver.
     bool config_standalone;
     uint32_t time_sync_sequence;
+    FuriEventLoopTimer* classic_alert_timer;
+    uint32_t classic_alert_tick;
+    atomic_bool classic_alert_pending;
+    bool classic_alert_started;
+    bool classic_alert_sounding;
+    uint8_t classic_alert_remaining;
 
     PocsagTxEncoder* tx_encoder;
     FlexTxEncoder* flex_tx_encoder;
@@ -111,6 +120,10 @@ void pcsg_get_frequency_modulation(
     FuriString* modulation);
 bool pcsg_preset_is_flex4(const char* preset_name);
 void pcsg_time_sync(POCSAGPagerApp* app);
+bool pcsg_classic_alert_request(POCSAGPagerApp* app);
+void pcsg_classic_alert_tick(POCSAGPagerApp* app);
+void pcsg_classic_alert_reset(POCSAGPagerApp* app);
+void pcsg_classic_alert_free(POCSAGPagerApp* app);
 void pcsg_begin(POCSAGPagerApp* app, uint8_t* preset_data);
 uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency);
 void pcsg_idle(POCSAGPagerApp* app);

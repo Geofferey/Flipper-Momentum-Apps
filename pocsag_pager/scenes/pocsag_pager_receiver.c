@@ -115,7 +115,9 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
             notification_message(
                 app->notifications, pcsg_led_blink_sequence(app->filter.decode_led_color));
         }
-        notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
+        if(!pcsg_classic_alert_request(app)) {
+            notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
+        }
         app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
     }
 }

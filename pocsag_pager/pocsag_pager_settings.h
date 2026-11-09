@@ -68,6 +68,12 @@ typedef enum {
     PCSGAlertCount,
 } PCSGAlert;
 
+typedef enum {
+    PCSGAlertToneDefault,
+    PCSGAlertToneClassic,
+    PCSGAlertToneCount,
+} PCSGAlertTone;
+
 /** Shared indicator palette; append colors to preserve saved values. */
 typedef enum {
     PCSGLedColorCyan,
@@ -151,6 +157,7 @@ typedef struct {
     // Log to one temp file destroyed on exit instead of a kept log per session.
     bool log_temp;
     PCSGAlert alert;
+    PCSGAlertTone alert_tone;
     bool receive_led;
     PCSGLedColor receive_led_color;
     bool decode_led;

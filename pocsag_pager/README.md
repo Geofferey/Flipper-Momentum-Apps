@@ -82,6 +82,22 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   blink can be disabled independently. Settings are saved to
   `/ext/apps_data/pocsag_pager/settings.txt` and restored at startup.
 
+**Alert Tone** offers `Default` (the existing short beep) and `Classic`.
+Classic follows the user's [pager tone reference](https://youtu.be/IVyItS3sZLo):
+the audio measures approximately 3200 Hz, with 875 ms on and 125 ms off.
+Each alert plays three beeps (2.875 seconds total). It synthesizes the measured
+pitch and cadence; the Flipper speaker's timbre can differ from the recording.
+A lazily allocated UI event-loop timer controls the long notes without holding
+up the notification service for their duration.
+
+Classic works with `Alert: Sound` or `Both`; Both adds the existing brief
+vibration at the start. It plays at most once every five seconds, including
+while a message is open. Messages arriving during the cooldown do not build
+an alert backlog. `Default`, `Vibro`, and `Off` retain their existing behavior.
+The tones use the firmware notification service and respect its sound
+settings and speaker ownership; Signal Sound can occupy the speaker.
+No backlight notification is sent. Older settings files use Default.
+
 **Time sync** offers `Off` (default), `MM:SS`, and `HH:MM:SS`.
 `MM:SS` keeps the existing nearest-hour correction, including hour/date carry
 at a boundary. `HH:MM:SS` uses that correction until validated time and

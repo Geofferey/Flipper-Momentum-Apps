@@ -269,6 +269,10 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
            value < PCSGLedColorCount) {
             filter->decode_led_color = value;
         }
+        if(flipper_format_read_uint32(file, "AlertTone", &value, 1) &&
+           value < PCSGAlertToneCount) {
+            filter->alert_tone = value;
+        }
     } while(false);
 
     furi_string_free(text);
@@ -367,6 +371,8 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
         if(!flipper_format_write_uint32(file, "TimeSync", &value, 1)) break;
         value = filter->decode_led_color;
         if(!flipper_format_write_uint32(file, "DecodeLedColor", &value, 1)) break;
+        value = filter->alert_tone;
+        if(!flipper_format_write_uint32(file, "AlertTone", &value, 1)) break;
         saved = true;
     } while(false);
 
