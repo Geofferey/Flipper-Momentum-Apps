@@ -40,7 +40,7 @@ bool pcsg_classic_alert_request(POCSAGPagerApp* app) {
 
 void pcsg_classic_alert_reset(POCSAGPagerApp* app) {
     atomic_store(&app->classic_alert_pending, false);
-    if(app->classic_alert_timer) furi_event_loop_timer_stop(app->classic_alert_timer);
+    if(app->classic_alert_remaining) furi_event_loop_timer_stop(app->classic_alert_timer);
     if(app->classic_alert_sounding) {
         notification_message(app->notifications, &sequence_reset_sound);
         app->classic_alert_sounding = false;

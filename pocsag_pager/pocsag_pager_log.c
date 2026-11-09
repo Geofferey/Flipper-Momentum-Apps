@@ -155,7 +155,9 @@ bool pcsg_log_open(PCSGLog* instance, const char* path) {
 static char* pcsg_log_read_line(PCSGLog* instance, uint16_t idx, uint32_t limit) {
     if(!instance->open || idx >= instance->count) return NULL;
     const uint32_t start = pcsg_log_offset(instance, idx);
-    uint32_t length = instance->file_size - start;
+    const uint32_t end = idx + 1U < instance->count ?
+                             pcsg_log_offset(instance, idx + 1U) : instance->file_size;
+    uint32_t length = end - start;
     if(length > limit) length = limit;
 
     char* buffer = malloc(length + 1U);

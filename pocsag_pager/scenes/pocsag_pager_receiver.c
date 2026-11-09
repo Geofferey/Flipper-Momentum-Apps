@@ -30,11 +30,6 @@ static const NotificationSequence pcsg_sequence_rx_vibro = {
     NULL,
 };
 
-static const NotificationSequence pcsg_sequence_rx_silent = {
-    &message_delay_50,
-    NULL,
-};
-
 // Message alerts use sound/vibration only; reception never wakes the backlight.
 static const NotificationSequence* pocsag_pager_scene_receiver_alert(POCSAGPagerApp* app) {
     switch(app->filter.alert) {
@@ -43,7 +38,7 @@ static const NotificationSequence* pocsag_pager_scene_receiver_alert(POCSAGPager
     case PCSGAlertVibro:
         return &pcsg_sequence_rx_vibro;
     case PCSGAlertOff:
-        return &pcsg_sequence_rx_silent;
+        return NULL;
     default:
         return &subghs_sequence_rx;
     }
@@ -116,7 +111,8 @@ static void pocsag_pager_scene_receiver_add_to_history_callback(
                 app->notifications, pcsg_led_blink_sequence(app->filter.decode_led_color));
         }
         if(!pcsg_classic_alert_request(app)) {
-            notification_message(app->notifications, pocsag_pager_scene_receiver_alert(app));
+            const NotificationSequence* alert = pocsag_pager_scene_receiver_alert(app);
+            if(alert) notification_message(app->notifications, alert);
         }
         app->txrx->rx_key_state = PCSGRxKeyStateAddKey;
     }

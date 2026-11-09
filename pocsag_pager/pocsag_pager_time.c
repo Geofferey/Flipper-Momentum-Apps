@@ -22,7 +22,8 @@ void pcsg_time_sync(POCSAGPagerApp* app) {
     if(age_ticks > furi_ms_to_ticks(PCSG_TIME_SYNC_MAX_AGE_MS)) return;
 
     const bool full = app->filter.time_sync == PCSGTimeSyncFull && timing.clock_valid;
-    const uint32_t age_ms = (uint64_t)age_ticks * 1000U / furi_kernel_get_tick_frequency();
+    // The five-second limit above is at most 5000 ticks on Flipper.
+    const uint32_t age_ms = age_ticks * 1000U / furi_kernel_get_tick_frequency();
     // FIW publication marks this frame's start; elapsed time includes reception.
     const uint32_t gps_seconds =
         ((uint32_t)timing.cycle * 240000U + (uint32_t)timing.frame * 1875U + age_ms + 500U) / 1000U;
