@@ -134,4 +134,16 @@ void subghz_protocol_decoder_flex_set_synth(
  */
 void subghz_protocol_decoder_flex_set_weak_decode(void* context, bool enable);
 
+/**
+ * Hand back everything the decoder only needs while receiving: the Weak
+ * Decode reliability buffer, the partial-page repair slots, any part-joining
+ * text, and the capacity its result strings grew to. The decoder itself
+ * outlives a receive session, so without this its peak stays resident for
+ * whatever runs next.
+ *
+ * Call with RX stopped. Joined parts still in progress are discarded rather
+ * than emitted: the session is over and its history goes with it.
+ */
+void subghz_protocol_decoder_flex_release_session(void* context);
+
 extern const SubGhzProtocol subghz_protocol_flex;

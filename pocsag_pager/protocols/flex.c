@@ -2023,6 +2023,33 @@ void subghz_protocol_decoder_flex_set_weak_decode(void* context, bool enable) {
     instance->weak_decode = enable && instance->phase_rel;
 }
 
+void subghz_protocol_decoder_flex_release_session(void* context) {
+    furi_assert(context);
+    SubGhzProtocolDecoderFlex* instance = context;
+
+    // Discarded, not flushed: flushing emits each partial assembly as a page,
+    // and the session's history is being torn down with it.
+    for(size_t i = 0; i < FLEX_FRAGMENT_SLOTS; i++) {
+        FlexFragmentSlot* slot = &instance->fragments[i];
+        if(slot->text) furi_string_free(slot->text);
+        memset(slot, 0, sizeof(*slot));
+    }
+
+    free(instance->partial);
+    instance->partial = NULL;
+
+    free(instance->phase_rel);
+    instance->phase_rel = NULL;
+    instance->weak_decode = false;
+
+    // furi_string_reset() frees the allocation rather than keeping its
+    // capacity, so this returns the last message's buffer. The reset below
+    // covers result_ric and result_msg but not serialize_scratch, hence this.
+    furi_string_reset(instance->generic.serialize_scratch);
+
+    subghz_protocol_decoder_flex_reset(instance);
+}
+
 uint8_t subghz_protocol_decoder_flex_get_hash_data(void* context) {
     furi_assert(context);
     SubGhzProtocolDecoderFlex* instance = context;

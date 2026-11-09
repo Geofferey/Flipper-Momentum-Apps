@@ -263,6 +263,20 @@ void pcsg_history_reset(PCSGHistory* instance) {
     memset(&instance->latest_label, 0, sizeof(instance->latest_label));
     memset(
         instance->labels, 0, PCSG_HISTORY_LABEL_CACHE_SIZE * sizeof(PCSGHistoryLabel));
+
+    // These reusable buffers still hold the last message of the session.
+    // furi_string_reset() frees the allocation instead of keeping its
+    // capacity, so a session can be followed by Review or a transmission
+    // without carrying a few KB of message text into it.
+    furi_string_reset(instance->protocol);
+    furi_string_reset(instance->ric);
+    furi_string_reset(instance->message);
+    furi_string_reset(instance->line);
+    // A string stream keeps its buffer across stream_clean() and offers no way
+    // to shrink it, so the only way to release it is a fresh one.
+    flipper_format_free(instance->scratch);
+    instance->scratch = flipper_format_string_alloc();
+
     furi_mutex_release(instance->mutex);
 }
 

@@ -42,6 +42,14 @@ void flex_sampler_set_freq_correction(FlexSampler* instance, int32_t ppm);
 /** Enable opt-in soft-decision (Chase) recovery of weak FLEX4 words. */
 void flex_sampler_set_weak_decode(FlexSampler* instance, bool enable);
 
+/**
+ * Release the shared FLEX decoder's receive-session buffers once the session
+ * is over, Weak Decode's reliability buffer among them. Must be called with
+ * the sampler stopped; it reverses flex_sampler_set_weak_decode(), so the
+ * next session has to set it again.
+ */
+void flex_sampler_release_session(FlexSampler* instance);
+
 typedef enum {
     FlexSamplerSoundOff,
     // The upper decision bit drives the speaker pin directly (full volume).

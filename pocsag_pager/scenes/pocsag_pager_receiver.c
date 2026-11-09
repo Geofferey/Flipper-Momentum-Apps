@@ -3,6 +3,8 @@
 #include "../protocols/flex.h"
 #include "../pocsag_pager_led.h"
 
+#define TAG "POCSAGPager"
+
 static const NotificationSequence subghs_sequence_rx = {
     &message_vibro_on,
     &message_note_c6,
@@ -188,7 +190,8 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
     bool consumed = false;
     if(event.type == SceneManagerEventTypeCustom) {
         switch(event.event) {
-        case PCSGCustomEventViewReceiverBack:
+        case PCSGCustomEventViewReceiverBack: {
+            const size_t heap_before = memmgr_get_free_heap();
             // Stop CC1101 Rx
             if(app->txrx->txrx_state == PCSGTxRxStateRx) {
                 pcsg_rx_end(app);
@@ -201,10 +204,22 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
             app->txrx->rx_key_state = PCSGRxKeyStateIDLE;
             // Close the session log and release its index; it is on SD now.
             pcsg_history_reset(app->txrx->history);
+            // The decoders outlive a session, so what receiving allocated in
+            // them would otherwise stay resident for Review or a transmission.
+            // Ordered after the callback is cleared and RX has stopped, so
+            // nothing can be decoding into the buffers being released.
+            subghz_receiver_reset(app->txrx->receiver);
+            flex_sampler_release_session(app->txrx->flex_sampler);
+            FURI_LOG_I(
+                TAG,
+                "RX exit: heap %u -> %u",
+                (unsigned)heap_before,
+                (unsigned)memmgr_get_free_heap());
             scene_manager_search_and_switch_to_previous_scene(
                 app->scene_manager, POCSAGPagerSceneStart);
             consumed = true;
             break;
+        }
         case PCSGCustomEventViewReceiverOK:
             app->txrx->idx_menu_chosen = pcsg_view_receiver_get_idx_menu(app->pcsg_receiver);
             scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneReceiverInfo);

@@ -649,6 +649,21 @@ void flex_sampler_set_freq_correction(FlexSampler* instance, int32_t ppm) {
     instance->freq_correction_ppm = ppm;
 }
 
+void flex_sampler_release_session(FlexSampler* instance) {
+    furi_assert(instance);
+    // Checked, not asserted: furi_assert compiles out of a release build, and
+    // releasing these while the sampler thread still decodes into them would
+    // corrupt the heap rather than merely waste it.
+    if(instance->running) {
+        FURI_LOG_E(TAG, "Session release with the sampler running");
+        return;
+    }
+    // stats_session_started is deliberately left alone: it decides whether the
+    // next session appends to the stats file or truncates it, and owns no memory.
+    instance->weak_decode_enable = false;
+    subghz_protocol_decoder_flex_release_session(instance->decoder);
+}
+
 void flex_sampler_set_weak_decode(FlexSampler* instance, bool enable) {
     furi_assert(instance);
     instance->weak_decode_enable = enable;
