@@ -7,14 +7,6 @@
 /** Highest FLEX capcode accepted by the capcode filter (NumberInput is int32). */
 #define PCSG_CAPCODE_MAX 2147483647U
 
-typedef enum {
-    PCSGTypeFilterAll,
-    PCSGTypeFilterAlpha,
-    PCSGTypeFilterAlphaNumeric,
-    PCSGTypeFilterNoTones,
-    PCSGTypeFilterCount,
-} PCSGTypeFilter;
-
 /** Off / Exact / Range filter, used for capcodes and FLEX frames. */
 typedef enum {
     PCSGCapcodeFilterOff,
@@ -137,7 +129,11 @@ typedef enum {
 } PCSGToneSpread;
 
 typedef struct {
-    PCSGTypeFilter type_filter;
+    // Independent visibility per FLEX page kind. POCSAG is not filtered by
+    // kind: it has only the RIC filter.
+    bool show_alpha;
+    bool show_numeric;
+    bool show_tone;
     bool show_binary;
     PCSGCapcodeFilter capcode_filter;
     uint32_t capcode_min;

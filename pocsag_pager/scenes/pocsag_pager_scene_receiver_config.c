@@ -4,9 +4,11 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFrequency,
     PCSGSettingIndexHopping,
     PCSGSettingIndexModulation,
-    PCSGSettingIndexFlexTypes,
-    PCSGSettingIndexFlexBinary,
+    PCSGSettingIndexShowAlpha,
     PCSGSettingIndexFlexDups,
+    PCSGSettingIndexShowNumeric,
+    PCSGSettingIndexShowTone,
+    PCSGSettingIndexShowBinary,
     PCSGSettingIndexFlexEncrypted,
     PCSGSettingIndexFlexPartial,
     PCSGSettingIndexLogging,
@@ -49,19 +51,6 @@ const char* const phase_filter_text[PCSGPhaseFilterCount] = {
     "B",
     "C",
     "D",
-};
-
-const char* const flex_types_text[PCSGTypeFilterCount] = {
-    "All",
-    "Alpha",
-    "Alpha+Num",
-    "No Tones",
-};
-
-#define FLEX_BINARY_COUNT 2
-const char* const flex_binary_text[FLEX_BINARY_COUNT] = {
-    "Off",
-    "Hex",
 };
 
 #define HIDE_SHOW_COUNT 2
@@ -341,17 +330,31 @@ static void pocsag_pager_scene_receiver_config_set_frame_filter(VariableItem* it
     pocsag_pager_scene_receiver_config_update_frame_max(app);
 }
 
-static void pocsag_pager_scene_receiver_config_set_flex_types(VariableItem* item) {
+static void pocsag_pager_scene_receiver_config_set_show_alpha(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, flex_types_text[index]);
-    app->filter.type_filter = index;
+    variable_item_set_current_value_text(item, hide_show_text[index]);
+    app->filter.show_alpha = index != 0;
 }
 
-static void pocsag_pager_scene_receiver_config_set_flex_binary(VariableItem* item) {
+static void pocsag_pager_scene_receiver_config_set_show_numeric(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, flex_binary_text[index]);
+    variable_item_set_current_value_text(item, hide_show_text[index]);
+    app->filter.show_numeric = index != 0;
+}
+
+static void pocsag_pager_scene_receiver_config_set_show_tone(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, hide_show_text[index]);
+    app->filter.show_tone = index != 0;
+}
+
+static void pocsag_pager_scene_receiver_config_set_show_binary(VariableItem* item) {
+    POCSAGPagerApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, hide_show_text[index]);
     app->filter.show_binary = index != 0;
 }
 
@@ -587,33 +590,53 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     variable_item_set_current_value_text(
         item, subghz_setting_get_preset_name(app->setting, value_index));
 
+    // One Hide/Show per FLEX page kind, replacing the old combined type
+    // filter. Duplicates keeps its third CAPS choice.
     item = variable_item_list_add(
         app->variable_item_list,
-        "FLEX Types:",
-        PCSGTypeFilterCount,
-        pocsag_pager_scene_receiver_config_set_flex_types,
+        "Alphanumeric:",
+        HIDE_SHOW_COUNT,
+        pocsag_pager_scene_receiver_config_set_show_alpha,
         app);
-    variable_item_set_current_value_index(item, app->filter.type_filter);
-    variable_item_set_current_value_text(item, flex_types_text[app->filter.type_filter]);
+    variable_item_set_current_value_index(item, app->filter.show_alpha);
+    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_alpha]);
 
     item = variable_item_list_add(
         app->variable_item_list,
-        "FLEX Binary:",
-        FLEX_BINARY_COUNT,
-        pocsag_pager_scene_receiver_config_set_flex_binary,
-        app);
-    variable_item_set_current_value_index(item, app->filter.show_binary);
-    variable_item_set_current_value_text(item, flex_binary_text[app->filter.show_binary]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "FLEX Dups:",
+        "Duplicates:",
         PCSGFlexDupsCount,
         pocsag_pager_scene_receiver_config_set_flex_dups,
         app);
     value_index = app->filter.flex_dups;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, flex_dups_text[value_index]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Numbers:",
+        HIDE_SHOW_COUNT,
+        pocsag_pager_scene_receiver_config_set_show_numeric,
+        app);
+    variable_item_set_current_value_index(item, app->filter.show_numeric);
+    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_numeric]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Tone only:",
+        HIDE_SHOW_COUNT,
+        pocsag_pager_scene_receiver_config_set_show_tone,
+        app);
+    variable_item_set_current_value_index(item, app->filter.show_tone);
+    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_tone]);
+
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Binary:",
+        HIDE_SHOW_COUNT,
+        pocsag_pager_scene_receiver_config_set_show_binary,
+        app);
+    variable_item_set_current_value_index(item, app->filter.show_binary);
+    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_binary]);
 
     // Hide/Show, the same choices as duplicates.
     item = variable_item_list_add(
@@ -706,7 +729,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     item = variable_item_list_add(
         app->variable_item_list,
-        "Tone Volume:",
+        "Signal Vol:",
         PCSGToneVolumeCount,
         pocsag_pager_scene_receiver_config_set_tone_volume,
         app);
@@ -715,7 +738,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     item = variable_item_list_add(
         app->variable_item_list,
-        "Tone Pitch:",
+        "Signal Pitch:",
         PCSGTonePitchCount,
         pocsag_pager_scene_receiver_config_set_tone_pitch,
         app);
@@ -724,7 +747,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     item = variable_item_list_add(
         app->variable_item_list,
-        "Tone Spread:",
+        "Signal Spread:",
         PCSGToneSpreadCount,
         pocsag_pager_scene_receiver_config_set_tone_spread,
         app);
@@ -787,7 +810,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     item = variable_item_list_add(
         app->variable_item_list,
-        "Freq Mode:",
+        "Correct Mode:",
         FREQ_MODE_COUNT,
         pocsag_pager_scene_receiver_config_set_freq_mode,
         app);
@@ -797,7 +820,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     item = variable_item_list_add(
         app->variable_item_list,
-        "Freq Corr ppm:",
+        "ppm +/- :",
         FREQ_PPM_COUNT,
         pocsag_pager_scene_receiver_config_set_freq_corr,
         app);

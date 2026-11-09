@@ -46,7 +46,7 @@ void pocsag_pager_scene_capcode_input_on_enter(void* context) {
     switch(field) {
     case PCSGNumberFieldFreqPpm:
         // Signed: + raises a low carrier, - lowers a high one.
-        header = "Freq Corr ppm";
+        header = "ppm +/-";
         min = -PCSG_FREQ_PPM_MAX;
         max = PCSG_FREQ_PPM_MAX;
         break;

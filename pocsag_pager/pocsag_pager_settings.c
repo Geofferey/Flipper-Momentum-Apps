@@ -69,19 +69,16 @@ bool pcsg_filter_accepts(
 
     switch(page.kind) {
     case FlexPageKindAlpha:
+        if(!filter->show_alpha) return false;
         break;
     case FlexPageKindNumeric:
-        if(filter->type_filter == PCSGTypeFilterAlpha) return false;
+        if(!filter->show_numeric) return false;
         break;
     case FlexPageKindTone:
-        if(filter->type_filter != PCSGTypeFilterAll) return false;
+        if(!filter->show_tone) return false;
         break;
     case FlexPageKindBinary:
         if(!filter->show_binary) return false;
-        if(filter->type_filter != PCSGTypeFilterAll &&
-           filter->type_filter != PCSGTypeFilterNoTones) {
-            return false;
-        }
         break;
     }
 
@@ -132,7 +129,6 @@ typedef struct {
  */
 static const PCSGSetting pcsg_settings[] = {
     {"Hopping", 0, PCSG_NO_FIELD, PCSGSetHopper},
-    {"FlexTypes", PCSGTypeFilterCount - 1, PCSG_FIELD(filter.type_filter), PCSGSetU32},
     {"FlexBinary", 0, PCSG_FIELD(filter.show_binary), PCSGSetBool},
     {"CapcodeFilter", PCSGCapcodeFilterCount - 1, PCSG_FIELD(filter.capcode_filter), PCSGSetU32},
     {"CapcodeMin", PCSG_CAPCODE_MAX, PCSG_FIELD(filter.capcode_min), PCSGSetU32},
@@ -174,6 +170,12 @@ static const PCSGSetting pcsg_settings[] = {
     {"TimeSync", PCSGTimeSyncCount - 1, PCSG_FIELD(filter.time_sync), PCSGSetU32},
     {"DecodeLedColor", PCSGLedColorCount - 1, PCSG_FIELD(filter.decode_led_color), PCSGSetU32},
     {"AlertTone", PCSGAlertToneCount - 1, PCSG_FIELD(filter.alert_tone), PCSGSetU32},
+    // The retired FlexTypes key is simply no longer read: the forward scan
+    // steps over a line nobody asks for. These three replace it, and have to
+    // go last because a key the file lacks ends every read after it.
+    {"ShowAlpha", 0, PCSG_FIELD(filter.show_alpha), PCSGSetBool},
+    {"ShowNumeric", 0, PCSG_FIELD(filter.show_numeric), PCSGSetBool},
+    {"ShowTone", 0, PCSG_FIELD(filter.show_tone), PCSGSetBool},
 };
 
 static uint32_t pcsg_setting_get(const POCSAGPagerApp* app, const PCSGSetting* setting) {

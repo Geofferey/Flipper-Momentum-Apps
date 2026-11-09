@@ -79,7 +79,7 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   defaults to Off. This is intended for licensed operators testing their own
   pager infrastructure; the app does not bypass firmware region restrictions.
 - **Settings** is the same configuration, available before receiving:
-  frequency, hopping, modulation, FLEX page types, binary pages, duplicates,
+  frequency, hopping, modulation, per-kind FLEX page visibility, duplicates,
   encrypted messages, logging, FLEX time sync, receive/decode LED indicators
   and a capcode filter. The receive activity blink can be disabled or set to
   cyan, blue, green, yellow, magenta, red or white; the successful-decode green
@@ -141,7 +141,10 @@ FLEX decoding features:
   marked `?`.
 - Pages with uncorrectable words are repaired from later copies when the
   network retransmits them (marked `R`).
-- FLEX Dups can hide repeated content, show every page, or use **CAPS** mode.
+- Alphanumeric, Numbers, Tone only and Binary each hide or show that kind of
+  FLEX page independently. POCSAG is not filtered by kind; it has only the RIC
+  filter.
+- Duplicates can hide repeated content, show every page, or use **CAPS** mode.
   Hide displays only the first copy regardless of capcode. CAPS shows copies
   addressed to different capcodes but hides true retransmits to the same cap.
   Show displays every copy. Duplicate copies remain available to repair/ECC

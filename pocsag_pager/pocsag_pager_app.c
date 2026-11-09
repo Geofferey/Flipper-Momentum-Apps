@@ -262,7 +262,10 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
     pcsg_preset_init(app, "POCSAG", 439987500, NULL, 0);
 
     app->txrx->hopper_state = PCSGHopperStateOFF;
-    app->filter.type_filter = PCSGTypeFilterAll;
+    // Every FLEX page kind is shown until the user hides one.
+    app->filter.show_alpha = true;
+    app->filter.show_numeric = true;
+    app->filter.show_tone = true;
     app->filter.show_binary = true;
     app->filter.capcode_filter = PCSGCapcodeFilterOff;
     app->filter.flex_dups = PCSGFlexDupsHide;
