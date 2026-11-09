@@ -139,10 +139,18 @@ const char* const capcode_filter_text[PCSGCapcodeFilterCount] = {
     "Range",
 };
 
-// The maximum is only used in range mode; its text shows that.
-static VariableItem* capcode_max_item;
-static VariableItem* ric_max_item;
-static VariableItem* frame_max_item;
+/*
+ * The maximum is only used in range mode; its text shows that.
+ *
+ * Each "max" row is looked up by position every time instead of keeping the
+ * VariableItem* that variable_item_list_add() returned. The list holds its
+ * items in an m-array, so adding the rows that follow eventually reallocates
+ * it and moves every item; a kept pointer then refers to freed memory, and
+ * writing a row's text through it corrupts the heap.
+ */
+static VariableItem* pcsg_config_row(POCSAGPagerApp* app, uint8_t index) {
+    return variable_item_list_get(app->variable_item_list, index);
+}
 
 #define HOPPING_COUNT 2
 const char* const hopping_text[HOPPING_COUNT] = {
@@ -196,10 +204,8 @@ uint8_t pocsag_pager_scene_receiver_config_hopper_value_index(
     if(value == values[0]) {
         return 0;
     } else {
-        variable_item_set_current_value_text(
-            (VariableItem*)scene_manager_get_scene_state(
-                app->scene_manager, POCSAGPagerSceneReceiverConfig),
-            " -----");
+        VariableItem* frequency = pcsg_config_row(app, PCSGSettingIndexFrequency);
+        if(frequency) variable_item_set_current_value_text(frequency, " -----");
         return 1;
     }
 }
@@ -244,6 +250,7 @@ static void pocsag_pager_scene_receiver_config_set_hopping_running(VariableItem*
     uint8_t index = variable_item_get_current_value_index(item);
 
     variable_item_set_current_value_text(item, hopping_text[index]);
+    VariableItem* frequency = pcsg_config_row(app, PCSGSettingIndexFrequency);
     if(hopping_value[index] == PCSGHopperStateOFF) {
         char text_buf[10] = {0};
         snprintf(
@@ -252,24 +259,17 @@ static void pocsag_pager_scene_receiver_config_set_hopping_running(VariableItem*
             "%lu.%02lu",
             subghz_setting_get_default_frequency(app->setting) / 1000000,
             (subghz_setting_get_default_frequency(app->setting) % 1000000) / 10000);
-        variable_item_set_current_value_text(
-            (VariableItem*)scene_manager_get_scene_state(
-                app->scene_manager, POCSAGPagerSceneReceiverConfig),
-            text_buf);
         app->txrx->preset->frequency = subghz_setting_get_default_frequency(app->setting);
+        if(frequency) {
+            variable_item_set_current_value_text(frequency, text_buf);
+            variable_item_set_current_value_index(
+                frequency, subghz_setting_get_frequency_default_index(app->setting));
+        }
+    } else if(frequency) {
+        // Hopping chooses the channel, so the frequency row shows no value.
+        variable_item_set_current_value_text(frequency, " -----");
         variable_item_set_current_value_index(
-            (VariableItem*)scene_manager_get_scene_state(
-                app->scene_manager, POCSAGPagerSceneReceiverConfig),
-            subghz_setting_get_frequency_default_index(app->setting));
-    } else {
-        variable_item_set_current_value_text(
-            (VariableItem*)scene_manager_get_scene_state(
-                app->scene_manager, POCSAGPagerSceneReceiverConfig),
-            " -----");
-        variable_item_set_current_value_index(
-            (VariableItem*)scene_manager_get_scene_state(
-                app->scene_manager, POCSAGPagerSceneReceiverConfig),
-            subghz_setting_get_frequency_default_index(app->setting));
+            frequency, subghz_setting_get_frequency_default_index(app->setting));
     }
 
     app->txrx->hopper_state = hopping_value[index];
@@ -283,19 +283,22 @@ static void pocsag_pager_scene_receiver_config_set_capcode_text(VariableItem* it
 }
 
 static void pocsag_pager_scene_receiver_config_update_capcode_max(POCSAGPagerApp* app) {
+    VariableItem* item = pcsg_config_row(app, PCSGSettingIndexCapcodeMax);
+    if(!item) return;
     if(app->filter.capcode_filter == PCSGCapcodeFilterRange) {
-        pocsag_pager_scene_receiver_config_set_capcode_text(
-            capcode_max_item, app->filter.capcode_max);
+        pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.capcode_max);
     } else {
-        variable_item_set_current_value_text(capcode_max_item, "--");
+        variable_item_set_current_value_text(item, "--");
     }
 }
 
 static void pocsag_pager_scene_receiver_config_update_ric_max(POCSAGPagerApp* app) {
+    VariableItem* item = pcsg_config_row(app, PCSGSettingIndexRicMax);
+    if(!item) return;
     if(app->filter.ric_filter == PCSGCapcodeFilterRange) {
-        pocsag_pager_scene_receiver_config_set_capcode_text(ric_max_item, app->filter.ric_max);
+        pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.ric_max);
     } else {
-        variable_item_set_current_value_text(ric_max_item, "--");
+        variable_item_set_current_value_text(item, "--");
     }
 }
 
@@ -308,10 +311,12 @@ static void pocsag_pager_scene_receiver_config_set_ric_filter(VariableItem* item
 }
 
 static void pocsag_pager_scene_receiver_config_update_frame_max(POCSAGPagerApp* app) {
+    VariableItem* item = pcsg_config_row(app, PCSGSettingIndexFrameMax);
+    if(!item) return;
     if(app->filter.frame_filter == PCSGCapcodeFilterRange) {
-        pocsag_pager_scene_receiver_config_set_capcode_text(frame_max_item, app->filter.frame_max);
+        pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.frame_max);
     } else {
-        variable_item_set_current_value_text(frame_max_item, "--");
+        variable_item_set_current_value_text(item, "--");
     }
 }
 
@@ -555,8 +560,6 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         app);
     value_index =
         pocsag_pager_scene_receiver_config_next_frequency(app->txrx->preset->frequency, app);
-    scene_manager_set_scene_state(
-        app->scene_manager, POCSAGPagerSceneReceiverConfig, (uint32_t)item);
     variable_item_set_current_value_index(item, value_index);
     char text_buf[10] = {0};
     snprintf(
@@ -766,7 +769,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     item = variable_item_list_add(app->variable_item_list, "Capcode:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.capcode_min);
 
-    capcode_max_item = variable_item_list_add(app->variable_item_list, "Cap. Max:", 1, NULL, app);
+    variable_item_list_add(app->variable_item_list, "Cap. Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_capcode_max(app);
 
     item = variable_item_list_add(
@@ -781,7 +784,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     item = variable_item_list_add(app->variable_item_list, "RIC:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.ric_min);
 
-    ric_max_item = variable_item_list_add(app->variable_item_list, "RIC Max:", 1, NULL, app);
+    variable_item_list_add(app->variable_item_list, "RIC Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_ric_max(app);
 
     item = variable_item_list_add(
@@ -805,7 +808,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     item = variable_item_list_add(app->variable_item_list, "Frame:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.frame_min);
 
-    frame_max_item = variable_item_list_add(app->variable_item_list, "Frame Max:", 1, NULL, app);
+    variable_item_list_add(app->variable_item_list, "Frame Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_frame_max(app);
 
     item = variable_item_list_add(
@@ -921,8 +924,5 @@ void pocsag_pager_scene_receiver_config_on_exit(void* context) {
         variable_item_list_get_selected_item_index(app->variable_item_list);
     variable_item_list_set_selected_item(app->variable_item_list, 0);
     variable_item_list_reset(app->variable_item_list);
-    capcode_max_item = NULL;
-    ric_max_item = NULL;
-    frame_max_item = NULL;
     pcsg_settings_save(app);
 }
