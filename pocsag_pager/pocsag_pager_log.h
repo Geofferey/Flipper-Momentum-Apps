@@ -26,7 +26,7 @@ uint16_t pcsg_log_get_count(PCSGLog* instance);
 /** Whether the log held more messages than were indexed. */
 bool pcsg_log_is_truncated(PCSGLog* instance);
 
-/** List label for a message: receive time, then the history label. */
+/** List label for a message, using the same formatter as live history. */
 void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label);
 
 /** Escaped header/message for the info view; caller frees the returned entry. */

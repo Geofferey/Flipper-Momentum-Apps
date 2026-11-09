@@ -394,16 +394,11 @@ bool pcsg_view_receiver_input(InputEvent* event, void* context) {
     }
 
     if(event->key == InputKeyBack) {
-        // Leaving the receiver ends the session, so it takes a long press;
-        // a short press only shows a hint. Reviewing a log leaves on a short
-        // press as usual.
-        bool review = false;
-        with_view_model(
-            pcsg_receiver->view, PCSGReceiverModel * model, { review = model->review; }, false);
-        if(event->type == (review ? InputTypeShort : InputTypeLong)) {
+        // Live and saved lists share hold-to-exit and double-tap-to-latest.
+        if(event->type == InputTypeLong) {
             pcsg_receiver->back_tap_pending = false;
             pcsg_receiver->callback(PCSGCustomEventViewReceiverBack, pcsg_receiver->context);
-        } else if(!review && event->type == InputTypeShort) {
+        } else if(event->type == InputTypeShort) {
             const uint32_t now = furi_get_tick();
             const bool double_tap =
                 pcsg_receiver->back_tap_pending &&

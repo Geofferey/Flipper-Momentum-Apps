@@ -188,13 +188,9 @@ void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label) {
     char* line = pcsg_log_read_line(instance, idx, PCSG_LOG_LABEL_PREFIX - 1U);
     char* fields[PCSGLogFieldCount];
     if(line && pcsg_history_split_line(line, fields)) {
-        // HH:MM from HH:MM:SS, then the same label the receiver list shows.
-        const size_t time_length = strnlen(fields[PCSGLogFieldTime], 5);
-        memcpy(slot->label, fields[PCSGLogFieldTime], time_length);
-        slot->label[time_length] = ' ';
         pcsg_history_make_label_escaped(
-            slot->label + time_length + 1U,
-            sizeof(slot->label) - time_length - 1U,
+            slot->label,
+            sizeof(slot->label),
             fields[PCSGLogFieldRic],
             fields[PCSGLogFieldMessage]);
     }
