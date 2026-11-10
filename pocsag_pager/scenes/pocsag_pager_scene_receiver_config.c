@@ -302,14 +302,6 @@ static void pocsag_pager_scene_receiver_config_update_ric_max(POCSAGPagerApp* ap
     }
 }
 
-static void pocsag_pager_scene_receiver_config_set_ric_filter(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, capcode_filter_text[index]);
-    app->filter.ric_filter = index;
-    pocsag_pager_scene_receiver_config_update_ric_max(app);
-}
-
 static void pocsag_pager_scene_receiver_config_update_frame_max(POCSAGPagerApp* app) {
     VariableItem* item = pcsg_config_row(app, PCSGSettingIndexFrameMax);
     if(!item) return;
@@ -320,176 +312,11 @@ static void pocsag_pager_scene_receiver_config_update_frame_max(POCSAGPagerApp* 
     }
 }
 
-static void pocsag_pager_scene_receiver_config_set_phase_filter(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, phase_filter_text[index]);
-    app->filter.phase_filter = index;
-}
-
-static void pocsag_pager_scene_receiver_config_set_frame_filter(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, capcode_filter_text[index]);
-    app->filter.frame_filter = index;
-    pocsag_pager_scene_receiver_config_update_frame_max(app);
-}
-
-static void pocsag_pager_scene_receiver_config_set_show_alpha(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, hide_show_text[index]);
-    app->filter.show_alpha = index != 0;
-}
-
-static void pocsag_pager_scene_receiver_config_set_show_numeric(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, hide_show_text[index]);
-    app->filter.show_numeric = index != 0;
-}
-
-static void pocsag_pager_scene_receiver_config_set_show_tone(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, hide_show_text[index]);
-    app->filter.show_tone = index != 0;
-}
-
-static void pocsag_pager_scene_receiver_config_set_show_binary(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, hide_show_text[index]);
-    app->filter.show_binary = index != 0;
-}
-
-static void pocsag_pager_scene_receiver_config_set_flex_dups(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, flex_dups_text[index]);
-    app->filter.flex_dups = index;
-}
-
-static void pocsag_pager_scene_receiver_config_set_flex_partial(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, hide_show_text[index]);
-    app->filter.hide_partial = index == 0;
-}
-
-static void pocsag_pager_scene_receiver_config_set_flex_encrypted(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, hide_show_text[index]);
-    app->filter.hide_encrypted = index == 0;
-}
-
-// Applies from the next receive session.
-static void pocsag_pager_scene_receiver_config_set_logging(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, logging_text[index]);
-    app->filter.log_temp = index == 1;
-}
-
-static void pocsag_pager_scene_receiver_config_set_alert(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, alert_text[index]);
-    app->filter.alert = index;
-    pcsg_classic_alert_reset(app);
-}
-
-static void pocsag_pager_scene_receiver_config_set_alert_tone(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, alert_tone_text[index]);
-    app->filter.alert_tone = index;
-    pcsg_classic_alert_reset(app);
-}
-
-static void pocsag_pager_scene_receiver_config_set_receive_led(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    const uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, led_color_text[index]);
-    app->filter.receive_led = index != 0U;
-    if(index) app->filter.receive_led_color = index - 1U;
-}
-
-static void pocsag_pager_scene_receiver_config_set_decode_led(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    const uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, led_color_text[index]);
-    app->filter.decode_led = index != 0U;
-    if(index) app->filter.decode_led_color = index - 1U;
-}
-
-static void pocsag_pager_scene_receiver_config_set_time_sync(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    const uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, time_sync_text[index]);
-    app->filter.time_sync = index;
-    app->time_sync_sequence = 0;
-}
-
-// The speaker is set up when receiving starts, so restart the radio.
-static void pocsag_pager_scene_receiver_config_set_signal_sound(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, signal_sound_text[index]);
-    app->filter.signal_sound = index;
-    app->txrx->rx_restart = true;
-}
-
-static void pocsag_pager_scene_receiver_config_set_tone_volume(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, tone_volume_text[index]);
-    app->filter.tone_volume = index;
-    app->txrx->rx_restart = true;
-}
-
-static void pocsag_pager_scene_receiver_config_set_tone_pitch(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, tone_pitch_text[index]);
-    app->filter.tone_pitch = index;
-    app->txrx->rx_restart = true;
-}
-
 #define RAW_CAPTURE_COUNT 2
 const char* const raw_capture_text[RAW_CAPTURE_COUNT] = {
     "Off",
     "On",
 };
-static void pocsag_pager_scene_receiver_config_set_raw_capture(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, raw_capture_text[index]);
-    app->filter.raw_capture = index == 1;
-}
-
-static void pocsag_pager_scene_receiver_config_set_stats_log(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, raw_capture_text[index]);
-    app->filter.stats_log = index == 1;
-}
-
-static void pocsag_pager_scene_receiver_config_set_weak_decode(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, raw_capture_text[index]);
-    app->filter.weak_decode = index == 1;
-}
-
-static void pocsag_pager_scene_receiver_config_set_freq_mode(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, freq_mode_text[index]);
-    app->filter.freq_auto = index == 1;
-}
-
 // Index 0 is -PCSG_FREQ_PPM_MAX; the centre index is 0 ppm.
 #define FREQ_PPM_COUNT (2U * PCSG_FREQ_PPM_MAX + 1U)
 static void pocsag_pager_scene_receiver_config_set_freq_corr(VariableItem* item) {
@@ -501,20 +328,204 @@ static void pocsag_pager_scene_receiver_config_set_freq_corr(VariableItem* item)
     variable_item_set_current_value_text(item, buf);
 }
 
-static void pocsag_pager_scene_receiver_config_set_tone_spread(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, tone_spread_text[index]);
-    app->filter.tone_spread = index;
-    app->txrx->rx_restart = true;
+/*
+ * Every row that is just "pick a value, store it, maybe poke something" is
+ * described here instead of getting its own setter and its own four lines in
+ * on_enter. The entries are placed by PCSGSettingIndex, so the table and the
+ * list cannot drift apart, and the gaps are the rows that genuinely differ
+ * (frequency, preset, the number entries, ppm, Lock).
+ */
+typedef enum {
+    PCSGRowNone, // a row this table does not describe
+    PCSGRowEnum, // field = index
+    PCSGRowBool, // field = index != 0
+    PCSGRowBoolInv, // the file shows "Show", the field holds "hidden"
+    PCSGRowLed, // off, or one colour per index past it
+} PCSGRowKind;
+
+typedef enum {
+    PCSGSideNone,
+    PCSGSideCapcodeMax,
+    PCSGSideRicMax,
+    PCSGSideFrameMax,
+    PCSGSideAlert,
+    PCSGSideTimeSync,
+    PCSGSideRxRestart,
+} PCSGRowSide;
+
+typedef struct {
+    const char* label;
+    const char* const* text;
+    uint16_t offset;
+    // PCSGRowLed only: the colour field that index 1 and up select.
+    uint16_t extra;
+    uint8_t count;
+    uint8_t kind;
+    uint8_t side;
+} PCSGConfigRow;
+
+#define PCSG_ROW(member) offsetof(POCSAGPagerApp, member)
+
+// Every field below is one byte, which is what lets them share one accessor.
+_Static_assert(sizeof(bool) == 1, "row fields are byte-wide");
+_Static_assert(sizeof(PCSGAlert) == 1, "build is missing -fshort-enums");
+
+static const PCSGConfigRow pcsg_config_rows[] = {
+    [PCSGSettingIndexShowAlpha] =
+        {"Alphanumeric:", hide_show_text, PCSG_ROW(filter.show_alpha), 0, HIDE_SHOW_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    [PCSGSettingIndexFlexDups] =
+        {"Duplicates:", flex_dups_text, PCSG_ROW(filter.flex_dups), 0, PCSGFlexDupsCount,
+         PCSGRowEnum, PCSGSideNone},
+    [PCSGSettingIndexShowNumeric] =
+        {"Numbers:", hide_show_text, PCSG_ROW(filter.show_numeric), 0, HIDE_SHOW_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    [PCSGSettingIndexShowTone] =
+        {"Tone only:", hide_show_text, PCSG_ROW(filter.show_tone), 0, HIDE_SHOW_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    [PCSGSettingIndexShowBinary] =
+        {"Binary:", hide_show_text, PCSG_ROW(filter.show_binary), 0, HIDE_SHOW_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    [PCSGSettingIndexFlexEncrypted] =
+        {"Encrypted:", hide_show_text, PCSG_ROW(filter.hide_encrypted), 0, HIDE_SHOW_COUNT,
+         PCSGRowBoolInv, PCSGSideNone},
+    // Hide = discard messages that could not be fully decoded.
+    [PCSGSettingIndexFlexPartial] =
+        {"Partial Msgs:", hide_show_text, PCSG_ROW(filter.hide_partial), 0, HIDE_SHOW_COUNT,
+         PCSGRowBoolInv, PCSGSideNone},
+    // Applies from the next receive session.
+    [PCSGSettingIndexLogging] =
+        {"Logging:", logging_text, PCSG_ROW(filter.log_temp), 0, LOGGING_COUNT, PCSGRowBool,
+         PCSGSideNone},
+    [PCSGSettingIndexAlert] =
+        {"Alert:", alert_text, PCSG_ROW(filter.alert), 0, PCSGAlertCount, PCSGRowEnum,
+         PCSGSideAlert},
+    [PCSGSettingIndexAlertTone] =
+        {"Alert Tone:", alert_tone_text, PCSG_ROW(filter.alert_tone), 0, PCSGAlertToneCount,
+         PCSGRowEnum, PCSGSideAlert},
+    [PCSGSettingIndexReceiveLed] =
+        {"Receive LED:", led_color_text, PCSG_ROW(filter.receive_led),
+         PCSG_ROW(filter.receive_led_color), LED_SELECTION_COUNT, PCSGRowLed, PCSGSideNone},
+    [PCSGSettingIndexDecodeLed] =
+        {"Decode LED:", led_color_text, PCSG_ROW(filter.decode_led),
+         PCSG_ROW(filter.decode_led_color), LED_SELECTION_COUNT, PCSGRowLed, PCSGSideNone},
+    [PCSGSettingIndexTimeSync] =
+        {"Time sync:", time_sync_text, PCSG_ROW(filter.time_sync), 0, PCSGTimeSyncCount,
+         PCSGRowEnum, PCSGSideTimeSync},
+    // The speaker is set up when receiving starts, so these restart the radio.
+    [PCSGSettingIndexSignalSound] =
+        {"Signal Sound:", signal_sound_text, PCSG_ROW(filter.signal_sound), 0, PCSGSoundCount,
+         PCSGRowEnum, PCSGSideRxRestart},
+    [PCSGSettingIndexToneVolume] =
+        {"Signal Vol:", tone_volume_text, PCSG_ROW(filter.tone_volume), 0, PCSGToneVolumeCount,
+         PCSGRowEnum, PCSGSideRxRestart},
+    [PCSGSettingIndexTonePitch] =
+        {"Signal Pitch:", tone_pitch_text, PCSG_ROW(filter.tone_pitch), 0, PCSGTonePitchCount,
+         PCSGRowEnum, PCSGSideRxRestart},
+    [PCSGSettingIndexToneSpread] =
+        {"Signal Spread:", tone_spread_text, PCSG_ROW(filter.tone_spread), 0,
+         PCSGToneSpreadCount, PCSGRowEnum, PCSGSideRxRestart},
+    [PCSGSettingIndexCapcodeFilter] =
+        {"Cap. Filter:", capcode_filter_text, PCSG_ROW(filter.capcode_filter), 0,
+         PCSGCapcodeFilterCount, PCSGRowEnum, PCSGSideCapcodeMax},
+    [PCSGSettingIndexRicFilter] =
+        {"RIC Filter:", capcode_filter_text, PCSG_ROW(filter.ric_filter), 0,
+         PCSGCapcodeFilterCount, PCSGRowEnum, PCSGSideRicMax},
+    [PCSGSettingIndexFlexPhase] =
+        {"FLEX Phase:", phase_filter_text, PCSG_ROW(filter.phase_filter), 0,
+         PCSGPhaseFilterCount, PCSGRowEnum, PCSGSideNone},
+    [PCSGSettingIndexFrameFilter] =
+        {"Frame Filter:", capcode_filter_text, PCSG_ROW(filter.frame_filter), 0,
+         PCSGCapcodeFilterCount, PCSGRowEnum, PCSGSideFrameMax},
+    [PCSGSettingIndexFreqMode] =
+        {"Correct Mode:", freq_mode_text, PCSG_ROW(filter.freq_auto), 0, FREQ_MODE_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    // Debug: record the raw FLEX4 sample stream to SD for offline analysis.
+    [PCSGSettingIndexRawCapture] =
+        {"Raw Capture:", raw_capture_text, PCSG_ROW(filter.raw_capture), 0, RAW_CAPTURE_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    // Debug: periodic counter-only snapshots for untethered reception tests.
+    [PCSGSettingIndexStatsLog] =
+        {"Stats Log:", raw_capture_text, PCSG_ROW(filter.stats_log), 0, RAW_CAPTURE_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    // Soft-decision (Chase) recovery of weak FLEX4 words. Off by default: it
+    // allocates its reliability buffer in the decoder only while enabled.
+    [PCSGSettingIndexWeakDecode] =
+        {"Weak Decode:", raw_capture_text, PCSG_ROW(filter.weak_decode), 0, RAW_CAPTURE_COUNT,
+         PCSGRowBool, PCSGSideNone},
+    // Lock has no value to pick, and fixes the table's length to the list's.
+    [PCSGSettingIndexLock] = {NULL, NULL, 0, 0, 0, PCSGRowNone, PCSGSideNone},
+};
+
+static uint8_t pcsg_config_row_value(const POCSAGPagerApp* app, const PCSGConfigRow* row) {
+    const uint8_t stored = *((const uint8_t*)app + row->offset);
+    if(row->kind == PCSGRowBoolInv) return stored ? 0U : 1U;
+    if(row->kind == PCSGRowLed) {
+        return stored ? (uint8_t)(*((const uint8_t*)app + row->extra) + 1U) : 0U;
+    }
+    return stored;
 }
 
-static void pocsag_pager_scene_receiver_config_set_capcode_filter(VariableItem* item) {
+// The row being changed is always the selected one, which is how this finds
+// its description without a separate callback per row.
+static void pcsg_config_row_changed(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-    variable_item_set_current_value_text(item, capcode_filter_text[index]);
-    app->filter.capcode_filter = index;
-    pocsag_pager_scene_receiver_config_update_capcode_max(app);
+    const uint8_t index = variable_item_list_get_selected_item_index(app->variable_item_list);
+    if(index >= COUNT_OF(pcsg_config_rows)) return;
+    const PCSGConfigRow* row = &pcsg_config_rows[index];
+    if(row->kind == PCSGRowNone) return;
+
+    const uint8_t value = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, row->text[value]);
+
+    uint8_t* field = (uint8_t*)app + row->offset;
+    switch(row->kind) {
+    case PCSGRowEnum:
+        *field = value;
+        break;
+    case PCSGRowBoolInv:
+        *field = value == 0U;
+        break;
+    case PCSGRowLed:
+        *field = value != 0U;
+        if(value) *((uint8_t*)app + row->extra) = value - 1U;
+        break;
+    default:
+        *field = value != 0U;
+        break;
+    }
+
+    switch(row->side) {
+    case PCSGSideCapcodeMax:
+        pocsag_pager_scene_receiver_config_update_capcode_max(app);
+        break;
+    case PCSGSideRicMax:
+        pocsag_pager_scene_receiver_config_update_ric_max(app);
+        break;
+    case PCSGSideFrameMax:
+        pocsag_pager_scene_receiver_config_update_frame_max(app);
+        break;
+    case PCSGSideAlert:
+        pcsg_classic_alert_reset(app);
+        break;
+    case PCSGSideTimeSync:
+        app->time_sync_sequence = 0;
+        break;
+    case PCSGSideRxRestart:
+        app->txrx->rx_restart = true;
+        break;
+    default:
+        break;
+    }
+}
+
+static void pcsg_config_row_add(POCSAGPagerApp* app, uint8_t index) {
+    const PCSGConfigRow* row = &pcsg_config_rows[index];
+    VariableItem* item = variable_item_list_add(
+        app->variable_item_list, row->label, row->count, pcsg_config_row_changed, app);
+    const uint8_t value = pcsg_config_row_value(app, row);
+    variable_item_set_current_value_index(item, value);
+    variable_item_set_current_value_text(item, row->text[value]);
 }
 
 static void
@@ -595,176 +606,24 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     // One Hide/Show per FLEX page kind, replacing the old combined type
     // filter. Duplicates keeps its third CAPS choice.
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Alphanumeric:",
-        HIDE_SHOW_COUNT,
-        pocsag_pager_scene_receiver_config_set_show_alpha,
-        app);
-    variable_item_set_current_value_index(item, app->filter.show_alpha);
-    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_alpha]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Duplicates:",
-        PCSGFlexDupsCount,
-        pocsag_pager_scene_receiver_config_set_flex_dups,
-        app);
-    value_index = app->filter.flex_dups;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, flex_dups_text[value_index]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Numbers:",
-        HIDE_SHOW_COUNT,
-        pocsag_pager_scene_receiver_config_set_show_numeric,
-        app);
-    variable_item_set_current_value_index(item, app->filter.show_numeric);
-    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_numeric]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Tone only:",
-        HIDE_SHOW_COUNT,
-        pocsag_pager_scene_receiver_config_set_show_tone,
-        app);
-    variable_item_set_current_value_index(item, app->filter.show_tone);
-    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_tone]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Binary:",
-        HIDE_SHOW_COUNT,
-        pocsag_pager_scene_receiver_config_set_show_binary,
-        app);
-    variable_item_set_current_value_index(item, app->filter.show_binary);
-    variable_item_set_current_value_text(item, hide_show_text[app->filter.show_binary]);
-
-    // Hide/Show, the same choices as duplicates.
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Encrypted:",
-        HIDE_SHOW_COUNT,
-        pocsag_pager_scene_receiver_config_set_flex_encrypted,
-        app);
-    value_index = app->filter.hide_encrypted ? 0 : 1;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, hide_show_text[value_index]);
-
-    // Hide = discard messages that could not be fully decoded.
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Partial Msgs:",
-        HIDE_SHOW_COUNT,
-        pocsag_pager_scene_receiver_config_set_flex_partial,
-        app);
-    value_index = app->filter.hide_partial ? 0 : 1;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, hide_show_text[value_index]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Logging:",
-        LOGGING_COUNT,
-        pocsag_pager_scene_receiver_config_set_logging,
-        app);
-    value_index = app->filter.log_temp ? 1 : 0;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, logging_text[value_index]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Alert:",
-        PCSGAlertCount,
-        pocsag_pager_scene_receiver_config_set_alert,
-        app);
-    variable_item_set_current_value_index(item, app->filter.alert);
-    variable_item_set_current_value_text(item, alert_text[app->filter.alert]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Alert Tone:",
-        PCSGAlertToneCount,
-        pocsag_pager_scene_receiver_config_set_alert_tone,
-        app);
-    variable_item_set_current_value_index(item, app->filter.alert_tone);
-    variable_item_set_current_value_text(item, alert_tone_text[app->filter.alert_tone]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Receive LED:",
-        LED_SELECTION_COUNT,
-        pocsag_pager_scene_receiver_config_set_receive_led,
-        app);
-    value_index = app->filter.receive_led ? app->filter.receive_led_color + 1U : 0U;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, led_color_text[value_index]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Decode LED:",
-        LED_SELECTION_COUNT,
-        pocsag_pager_scene_receiver_config_set_decode_led,
-        app);
-    value_index = app->filter.decode_led ? app->filter.decode_led_color + 1U : 0U;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, led_color_text[value_index]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Time sync:",
-        PCSGTimeSyncCount,
-        pocsag_pager_scene_receiver_config_set_time_sync,
-        app);
-    value_index = app->filter.time_sync;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, time_sync_text[value_index]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Signal Sound:",
-        PCSGSoundCount,
-        pocsag_pager_scene_receiver_config_set_signal_sound,
-        app);
-    variable_item_set_current_value_index(item, app->filter.signal_sound);
-    variable_item_set_current_value_text(item, signal_sound_text[app->filter.signal_sound]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Signal Vol:",
-        PCSGToneVolumeCount,
-        pocsag_pager_scene_receiver_config_set_tone_volume,
-        app);
-    variable_item_set_current_value_index(item, app->filter.tone_volume);
-    variable_item_set_current_value_text(item, tone_volume_text[app->filter.tone_volume]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Signal Pitch:",
-        PCSGTonePitchCount,
-        pocsag_pager_scene_receiver_config_set_tone_pitch,
-        app);
-    variable_item_set_current_value_index(item, app->filter.tone_pitch);
-    variable_item_set_current_value_text(item, tone_pitch_text[app->filter.tone_pitch]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Signal Spread:",
-        PCSGToneSpreadCount,
-        pocsag_pager_scene_receiver_config_set_tone_spread,
-        app);
-    variable_item_set_current_value_index(item, app->filter.tone_spread);
-    variable_item_set_current_value_text(item, tone_spread_text[app->filter.tone_spread]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Cap. Filter:",
-        PCSGCapcodeFilterCount,
-        pocsag_pager_scene_receiver_config_set_capcode_filter,
-        app);
-    variable_item_set_current_value_index(item, app->filter.capcode_filter);
-    variable_item_set_current_value_text(item, capcode_filter_text[app->filter.capcode_filter]);
+    pcsg_config_row_add(app, PCSGSettingIndexShowAlpha);
+    pcsg_config_row_add(app, PCSGSettingIndexFlexDups);
+    pcsg_config_row_add(app, PCSGSettingIndexShowNumeric);
+    pcsg_config_row_add(app, PCSGSettingIndexShowTone);
+    pcsg_config_row_add(app, PCSGSettingIndexShowBinary);
+    pcsg_config_row_add(app, PCSGSettingIndexFlexEncrypted);
+    pcsg_config_row_add(app, PCSGSettingIndexFlexPartial);
+    pcsg_config_row_add(app, PCSGSettingIndexLogging);
+    pcsg_config_row_add(app, PCSGSettingIndexAlert);
+    pcsg_config_row_add(app, PCSGSettingIndexAlertTone);
+    pcsg_config_row_add(app, PCSGSettingIndexReceiveLed);
+    pcsg_config_row_add(app, PCSGSettingIndexDecodeLed);
+    pcsg_config_row_add(app, PCSGSettingIndexTimeSync);
+    pcsg_config_row_add(app, PCSGSettingIndexSignalSound);
+    pcsg_config_row_add(app, PCSGSettingIndexToneVolume);
+    pcsg_config_row_add(app, PCSGSettingIndexTonePitch);
+    pcsg_config_row_add(app, PCSGSettingIndexToneSpread);
+    pcsg_config_row_add(app, PCSGSettingIndexCapcodeFilter);
 
     item = variable_item_list_add(app->variable_item_list, "Capcode:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.capcode_min);
@@ -772,14 +631,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     variable_item_list_add(app->variable_item_list, "Cap. Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_capcode_max(app);
 
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "RIC Filter:",
-        PCSGCapcodeFilterCount,
-        pocsag_pager_scene_receiver_config_set_ric_filter,
-        app);
-    variable_item_set_current_value_index(item, app->filter.ric_filter);
-    variable_item_set_current_value_text(item, capcode_filter_text[app->filter.ric_filter]);
+    pcsg_config_row_add(app, PCSGSettingIndexRicFilter);
 
     item = variable_item_list_add(app->variable_item_list, "RIC:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.ric_min);
@@ -787,23 +639,8 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     variable_item_list_add(app->variable_item_list, "RIC Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_ric_max(app);
 
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "FLEX Phase:",
-        PCSGPhaseFilterCount,
-        pocsag_pager_scene_receiver_config_set_phase_filter,
-        app);
-    variable_item_set_current_value_index(item, app->filter.phase_filter);
-    variable_item_set_current_value_text(item, phase_filter_text[app->filter.phase_filter]);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Frame Filter:",
-        PCSGCapcodeFilterCount,
-        pocsag_pager_scene_receiver_config_set_frame_filter,
-        app);
-    variable_item_set_current_value_index(item, app->filter.frame_filter);
-    variable_item_set_current_value_text(item, capcode_filter_text[app->filter.frame_filter]);
+    pcsg_config_row_add(app, PCSGSettingIndexFlexPhase);
+    pcsg_config_row_add(app, PCSGSettingIndexFrameFilter);
 
     item = variable_item_list_add(app->variable_item_list, "Frame:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_set_capcode_text(item, app->filter.frame_min);
@@ -811,15 +648,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     variable_item_list_add(app->variable_item_list, "Frame Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_frame_max(app);
 
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Correct Mode:",
-        FREQ_MODE_COUNT,
-        pocsag_pager_scene_receiver_config_set_freq_mode,
-        app);
-    value_index = app->filter.freq_auto ? 1 : 0;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, freq_mode_text[value_index]);
+    pcsg_config_row_add(app, PCSGSettingIndexFreqMode);
 
     item = variable_item_list_add(
         app->variable_item_list,
@@ -834,39 +663,9 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     snprintf(ppm_buf, sizeof(ppm_buf), "%+ld", (long)app->filter.freq_correction_ppm);
     variable_item_set_current_value_text(item, ppm_buf);
 
-    // Debug: record the raw FLEX4 sample stream to SD for offline analysis.
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Raw Capture:",
-        RAW_CAPTURE_COUNT,
-        pocsag_pager_scene_receiver_config_set_raw_capture,
-        app);
-    value_index = app->filter.raw_capture ? 1 : 0;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, raw_capture_text[value_index]);
-
-    // Debug: periodic counter-only snapshots for untethered reception tests.
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Stats Log:",
-        RAW_CAPTURE_COUNT,
-        pocsag_pager_scene_receiver_config_set_stats_log,
-        app);
-    value_index = app->filter.stats_log ? 1 : 0;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, raw_capture_text[value_index]);
-
-    // Soft-decision (Chase) recovery of weak FLEX4 words. Off by default: it
-    // allocates its reliability buffer in the decoder only while enabled.
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Weak Decode:",
-        RAW_CAPTURE_COUNT,
-        pocsag_pager_scene_receiver_config_set_weak_decode,
-        app);
-    value_index = app->filter.weak_decode ? 1 : 0;
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, raw_capture_text[value_index]);
+    pcsg_config_row_add(app, PCSGSettingIndexRawCapture);
+    pcsg_config_row_add(app, PCSGSettingIndexStatsLog);
+    pcsg_config_row_add(app, PCSGSettingIndexWeakDecode);
 
     // Locking the keyboard only makes sense while receiving.
     uint8_t selected = app->config_selected_index;
