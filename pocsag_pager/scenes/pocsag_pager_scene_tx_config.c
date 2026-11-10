@@ -78,9 +78,21 @@ static void pocsag_pager_scene_tx_set_frequency(VariableItem* item) {
     variable_item_set_current_value_text(item, text);
 }
 
+// FLEX short capcodes occupy their own range, so the address has to be moved
+// into it when the protocol changes and when the scene opens on it.
+static void pocsag_pager_scene_tx_clamp_address(POCSAGPagerApp* app) {
+    if(app->tx_config.protocol != PagerTxProtocolFlex) return;
+    if(app->tx_config.ric < FLEX_TX_SHORT_CAPCODE_MIN) {
+        app->tx_config.ric = FLEX_TX_SHORT_CAPCODE_MIN;
+    } else if(app->tx_config.ric > FLEX_TX_SHORT_CAPCODE_MAX) {
+        app->tx_config.ric = FLEX_TX_SHORT_CAPCODE_MAX;
+    }
+}
+
 static void pocsag_pager_scene_tx_show_address(POCSAGPagerApp* app) {
     VariableItem* item =
         variable_item_list_get(app->variable_item_list, PCSGTxConfigRic);
+    if(!item) return;
     variable_item_set_item_label(
         item, app->tx_config.protocol == PagerTxProtocolFlex ? "Capcode:" : "RIC:");
     char text[20];
@@ -88,18 +100,24 @@ static void pocsag_pager_scene_tx_show_address(POCSAGPagerApp* app) {
     variable_item_set_current_value_text(item, text);
 }
 
+/*
+ * Label, choice count and value of the address, function and baud rows all
+ * depend on the protocol. on_enter adds those three as placeholders and calls
+ * this, so the rules live here only, rather than once here and once there.
+ */
 static void pocsag_pager_scene_tx_show_protocol_options(POCSAGPagerApp* app) {
     const bool flex = app->tx_config.protocol == PagerTxProtocolFlex;
     pocsag_pager_scene_tx_show_address(app);
 
     VariableItem* function =
         variable_item_list_get(app->variable_item_list, PCSGTxConfigFunction);
+    VariableItem* baud = variable_item_list_get(app->variable_item_list, PCSGTxConfigBaud);
+    if(!function || !baud) return;
     variable_item_set_values_count(function, flex ? 1U : COUNT_OF(tx_function_text));
     variable_item_set_current_value_index(function, flex ? 0U : app->tx_config.function);
     variable_item_set_current_value_text(
         function, flex ? "N/A" : tx_function_text[app->tx_config.function]);
 
-    VariableItem* baud = variable_item_list_get(app->variable_item_list, PCSGTxConfigBaud);
     variable_item_set_item_label(baud, flex ? "Mode:" : "Baud:");
     variable_item_set_values_count(baud, flex ? 1U : COUNT_OF(tx_baud_values));
     if(flex) {
@@ -116,13 +134,7 @@ static void pocsag_pager_scene_tx_set_protocol(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     app->tx_config.protocol = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, tx_protocol_text[app->tx_config.protocol]);
-    if(app->tx_config.protocol == PagerTxProtocolFlex) {
-        if(app->tx_config.ric < FLEX_TX_SHORT_CAPCODE_MIN) {
-            app->tx_config.ric = FLEX_TX_SHORT_CAPCODE_MIN;
-        } else if(app->tx_config.ric > FLEX_TX_SHORT_CAPCODE_MAX) {
-            app->tx_config.ric = FLEX_TX_SHORT_CAPCODE_MAX;
-        }
-    }
+    pocsag_pager_scene_tx_clamp_address(app);
     pocsag_pager_scene_tx_show_protocol_options(app);
 }
 
@@ -174,13 +186,7 @@ void pocsag_pager_scene_tx_config_on_enter(void* context) {
     VariableItem* item;
     char text[20];
 
-    if(app->tx_config.protocol == PagerTxProtocolFlex) {
-        if(app->tx_config.ric < FLEX_TX_SHORT_CAPCODE_MIN) {
-            app->tx_config.ric = FLEX_TX_SHORT_CAPCODE_MIN;
-        } else if(app->tx_config.ric > FLEX_TX_SHORT_CAPCODE_MAX) {
-            app->tx_config.ric = FLEX_TX_SHORT_CAPCODE_MAX;
-        }
-    }
+    pocsag_pager_scene_tx_clamp_address(app);
 
     item = variable_item_list_add(
         app->variable_item_list,
@@ -200,44 +206,22 @@ void pocsag_pager_scene_tx_config_on_enter(void* context) {
     variable_item_set_current_value_index(item, pocsag_pager_scene_tx_frequency_index(app));
     pocsag_pager_scene_tx_set_frequency(item);
 
-    item = variable_item_list_add(
-        app->variable_item_list,
-        app->tx_config.protocol == PagerTxProtocolFlex ? "Capcode:" : "RIC:",
-        1,
-        NULL,
-        app);
-    snprintf(text, sizeof(text), "%lu", app->tx_config.ric);
-    variable_item_set_current_value_text(item, text);
-
-    item = variable_item_list_add(
+    // Placeholders: show_protocol_options() below sets the label, choice count
+    // and value of all three according to the protocol.
+    variable_item_list_add(app->variable_item_list, "RIC:", 1, NULL, app);
+    variable_item_list_add(
         app->variable_item_list,
         "Function:",
-        app->tx_config.protocol == PagerTxProtocolFlex ? 1U : COUNT_OF(tx_function_text),
+        COUNT_OF(tx_function_text),
         pocsag_pager_scene_tx_set_function,
         app);
-    variable_item_set_current_value_index(
-        item, app->tx_config.protocol == PagerTxProtocolFlex ? 0U : app->tx_config.function);
-    variable_item_set_current_value_text(
-        item,
-        app->tx_config.protocol == PagerTxProtocolFlex ?
-            "N/A" :
-            tx_function_text[app->tx_config.function]);
-
-    item = variable_item_list_add(
+    variable_item_list_add(
         app->variable_item_list,
-        app->tx_config.protocol == PagerTxProtocolFlex ? "Mode:" : "Baud:",
-        app->tx_config.protocol == PagerTxProtocolFlex ? 1U : COUNT_OF(tx_baud_values),
+        "Baud:",
+        COUNT_OF(tx_baud_values),
         pocsag_pager_scene_tx_set_baud,
         app);
-    const uint8_t baud_index = app->tx_config.protocol == PagerTxProtocolFlex ?
-                                   0U :
-                                   pocsag_pager_scene_tx_baud_index(app->tx_config.baud);
-    variable_item_set_current_value_index(item, baud_index);
-    variable_item_set_current_value_text(
-        item,
-        app->tx_config.protocol == PagerTxProtocolFlex ?
-            "1600/2FSK" :
-            tx_baud_text[baud_index]);
+    pocsag_pager_scene_tx_show_protocol_options(app);
 
     item = variable_item_list_add(
         app->variable_item_list,

@@ -7,20 +7,33 @@
 
 #include "flex_bch.h"
 
+#include <furi.h>
 #include <stdbool.h>
 #include <string.h>
 
+// No TAG macro here: tests/ compiles this file and flex.c as one unit, and
+// flex.c defines its own.
 #define FLEX_BCH_CODE_BITS 31U
 #define FLEX_BCH_PRIMITIVE 0x25U
+#define FLEX_BCH_SYNDROMES 1024U
 
 static uint8_t flex_exp_table[32];
 static uint8_t flex_s1_table[FLEX_BCH_CODE_BITS];
 static uint8_t flex_s3_table[FLEX_BCH_CODE_BITS];
-static uint16_t flex_bit_key[FLEX_BCH_CODE_BITS];
-// Error bits for each syndrome: up to two bit positions, each stored plus one
-// in 5 bits so that 0 means none (2 KB instead of 4 KB of 32-bit masks).
-static uint16_t flex_error_table[1024];
 static bool flex_bch_initialized;
+
+/*
+ * Error bits for each syndrome: up to two bit positions, each stored plus one
+ * in 5 bits so that 0 means none (2 KB instead of 4 KB of 32-bit masks).
+ *
+ * On the heap rather than in .bss, because 2 KB is a lot to hold for the whole
+ * session when it is only wanted while FLEX is being decoded;
+ * flex_bch_release() hands it back when receiving ends. Syndromes are computed
+ * from the small tables above, so losing this only costs correction: a clean
+ * word still verifies, and a corrupt one reports itself uncorrectable.
+ */
+static uint16_t* flex_error_table;
+static bool flex_error_table_failed;
 
 static uint8_t flex_bch_ctz(uint32_t value) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -64,6 +77,7 @@ static uint16_t flex_bch_syndrome(uint32_t codeword) {
     return ((uint16_t)s1 << 5) | s3;
 }
 
+// Syndrome tables only: no allocation, so this always succeeds.
 static void flex_bch_init(void) {
     if(flex_bch_initialized) return;
 
@@ -80,26 +94,50 @@ static void flex_bch_init(void) {
         flex_s3_table[i] = flex_exp_table[(3U * i) % FLEX_BCH_CODE_BITS];
     }
 
-    memset(flex_error_table, 0, sizeof(flex_error_table));
+    flex_bch_initialized = true;
+}
+
+// The syndrome-to-error-bits table, built on first use. NULL once an
+// allocation has failed, so a word being decoded never retries it.
+static const uint16_t* flex_bch_errors(void) {
+    flex_bch_init();
+    if(flex_error_table || flex_error_table_failed) return flex_error_table;
+
+    flex_error_table = malloc(FLEX_BCH_SYNDROMES * sizeof(*flex_error_table));
+    if(!flex_error_table) {
+        flex_error_table_failed = true;
+        FURI_LOG_E("FLEXBCH", "No memory for the BCH table; correction is off");
+        return NULL;
+    }
+    memset(flex_error_table, 0, FLEX_BCH_SYNDROMES * sizeof(*flex_error_table));
+
+    // Only needed while the table is being built.
+    uint16_t bit_key[FLEX_BCH_CODE_BITS];
     for(uint8_t bit = 0; bit < FLEX_BCH_CODE_BITS; bit++) {
         const uint8_t received_index = 30U - bit;
         const uint16_t key =
             ((uint16_t)flex_s1_table[received_index] << 5) |
             flex_s3_table[received_index];
-        flex_bit_key[bit] = key;
+        bit_key[bit] = key;
         flex_error_table[key] = bit + 1U;
     }
 
     for(uint8_t first = 0; first < FLEX_BCH_CODE_BITS; first++) {
         for(uint8_t second = first + 1; second < FLEX_BCH_CODE_BITS; second++) {
-            const uint16_t key = flex_bit_key[first] ^ flex_bit_key[second];
+            const uint16_t key = bit_key[first] ^ bit_key[second];
             if(flex_error_table[key] == 0) {
                 flex_error_table[key] = (first + 1U) | ((second + 1U) << 5);
             }
         }
     }
 
-    flex_bch_initialized = true;
+    return flex_error_table;
+}
+
+void flex_bch_release(void) {
+    free(flex_error_table);
+    flex_error_table = NULL;
+    flex_error_table_failed = false;
 }
 
 bool flex_bch_chase(uint32_t* word, const uint8_t rel[32]) {
@@ -174,9 +212,13 @@ int flex_bch_correct(uint32_t* codeword) {
     flex_bch_init();
 
     const uint16_t syndrome = flex_bch_syndrome(*codeword);
+    // A clean word needs no table, so this still verifies without one.
     if(syndrome == 0) return 0;
 
-    const uint16_t entry = flex_error_table[syndrome];
+    const uint16_t* errors = flex_bch_errors();
+    if(!errors) return -1;
+
+    const uint16_t entry = errors[syndrome];
     if(entry == 0) return -1;
     uint32_t error = 1UL << ((entry & 0x1FU) - 1U);
     if(entry >> 5) error |= 1UL << ((entry >> 5) - 1U);

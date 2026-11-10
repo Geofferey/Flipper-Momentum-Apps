@@ -2042,6 +2042,9 @@ void subghz_protocol_decoder_flex_release_session(void* context) {
     instance->phase_rel = NULL;
     instance->weak_decode = false;
 
+    // Shared by both FLEX paths and rebuilt on demand, so it goes back too.
+    flex_bch_release();
+
     // furi_string_reset() frees the allocation rather than keeping its
     // capacity, so this returns the last message's buffer. The reset below
     // covers result_ric and result_msg but not serialize_scratch, hence this.

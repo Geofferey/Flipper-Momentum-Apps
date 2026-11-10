@@ -27,3 +27,11 @@ int flex_bch_correct(uint32_t* codeword);
  * differ.
  */
 bool flex_bch_combine(uint32_t first, uint32_t second, uint32_t* codeword);
+
+/**
+ * Release the 2 KB syndrome-to-error table, which is built on first use and
+ * only wanted while FLEX is being decoded. It is rebuilt on demand, so this
+ * is safe between receive sessions; correction is unavailable until then,
+ * while clean words still verify.
+ */
+void flex_bch_release(void);
