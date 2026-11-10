@@ -152,9 +152,8 @@ struct FlexSampler {
     uint16_t stats_segment;
     int32_t freq_correction_ppm;
     bool weak_decode_enable;
-    // Chooses which SPI handle reaches this radio's CC1101, and which pin
-    // GDO1 arrives on.
-    bool external_radio;
+    // Reaches this radio's CC1101, to configure the pin GDO1 arrives on.
+    const FuriHalSpiBusHandle* spi;
 };
 
 #define FLEX_SOUND_SILENCED 0xFFU
@@ -542,7 +541,8 @@ FlexSampler* flex_sampler_alloc(
     instance->decoder = decoder;
     instance->data_msb = subghz_devices_get_data_gpio(radio_device);
     instance->data_lsb = external_radio ? &gpio_ext_pa6 : &gpio_spi_r_miso;
-    instance->external_radio = external_radio;
+    instance->spi = external_radio ? &furi_hal_spi_bus_handle_external :
+                                     &furi_hal_spi_bus_handle_subghz;
     return instance;
 }
 
@@ -572,17 +572,18 @@ FlexSampler* flex_sampler_alloc(
  * makes of it to SPI's alternate function, and releasing leaves it in the
  * resting state the HAL expects. The caller must therefore set this before
  * configuring the sampling GPIOs, and only after they are finished with.
+ *
+ * The write is not checked: it holds the bus mutex and has nothing to fall
+ * back on, and reusing trx() rather than tx() keeps this from costing the
+ * app another imported symbol.
  */
 static void flex_sampler_set_gdo1(FlexSampler* instance, uint8_t iocfg1) {
-    const FuriHalSpiBusHandle* handle = instance->external_radio ?
-                                            &furi_hal_spi_bus_handle_external :
-                                            &furi_hal_spi_bus_handle_subghz;
     const uint8_t tx[2] = {CC1101_IOCFG1, iocfg1};
+    uint8_t rx[2];
 
-    furi_hal_spi_acquire(handle);
-    const bool ok = furi_hal_spi_bus_tx(handle, tx, sizeof(tx), 10);
-    furi_hal_spi_release(handle);
-    if(!ok) FURI_LOG_E(TAG, "GDO1 config write failed");
+    furi_hal_spi_acquire(instance->spi);
+    furi_hal_spi_bus_trx(instance->spi, tx, rx, sizeof(tx), 10);
+    furi_hal_spi_release(instance->spi);
 }
 
 void flex_sampler_free(FlexSampler* instance) {
