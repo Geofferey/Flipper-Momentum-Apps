@@ -9,6 +9,8 @@
 #include <furi_hal_resources.h>
 #include <furi_hal_speaker.h>
 #include <furi_hal_rtc.h>
+#include <furi_hal_spi.h>
+#include <lib/drivers/cc1101_regs.h>
 #include <stm32wbxx_ll_tim.h>
 
 #define TAG "FlexSampler"
@@ -150,6 +152,9 @@ struct FlexSampler {
     uint16_t stats_segment;
     int32_t freq_correction_ppm;
     bool weak_decode_enable;
+    // Chooses which SPI handle reaches this radio's CC1101, and which pin
+    // GDO1 arrives on.
+    bool external_radio;
 };
 
 #define FLEX_SOUND_SILENCED 0xFFU
@@ -537,7 +542,47 @@ FlexSampler* flex_sampler_alloc(
     instance->decoder = decoder;
     instance->data_msb = subghz_devices_get_data_gpio(radio_device);
     instance->data_lsb = external_radio ? &gpio_ext_pa6 : &gpio_spi_r_miso;
+    instance->external_radio = external_radio;
     return instance;
+}
+
+/*
+ * Point GDO1 at the second hard-decision data bit while sampling, and put it
+ * back to 3-state afterwards.
+ *
+ * On the CC1101 GDO1 shares its pin with MISO: the chip drives GDO1 whenever
+ * its CSn is high, and the pin is MISO only while CSn is low. For the
+ * internal radio that pin is furi_hal_spi_bus_handle_subghz's MISO, and bus R
+ * is shared with furi_hal_spi_bus_handle_nfc, whose CSn is a different line.
+ * So a CC1101 left configured for GDO1 drives the bus throughout every NFC
+ * transfer and the NFC chip cannot be read. The external radio does the same
+ * to gpio_ext_pa6, its own bus's MISO.
+ *
+ * Nothing else restores it. furi_hal_subghz manages IOCFG0 and IOCFG2 but
+ * never IOCFG1: stock Sub-GHz leaves it at its 3-state reset default and
+ * relies on that, and only a full cc1101_reset() would bring it back, which
+ * the teardown path never does.
+ *
+ * The sampler owns this rather than the preset, because pcsg_rx() restarts
+ * receiving without reloading the preset (pcsg_retune() does exactly that
+ * after auto-calibration), so a value that arrived only with the preset would
+ * not survive a retune.
+ *
+ * Acquiring the bus also returns the MCU pin from the plain input the sampler
+ * makes of it to SPI's alternate function, and releasing leaves it in the
+ * resting state the HAL expects. The caller must therefore set this before
+ * configuring the sampling GPIOs, and only after they are finished with.
+ */
+static void flex_sampler_set_gdo1(FlexSampler* instance, uint8_t iocfg1) {
+    const FuriHalSpiBusHandle* handle = instance->external_radio ?
+                                            &furi_hal_spi_bus_handle_external :
+                                            &furi_hal_spi_bus_handle_subghz;
+    const uint8_t tx[2] = {CC1101_IOCFG1, iocfg1};
+
+    furi_hal_spi_acquire(handle);
+    const bool ok = furi_hal_spi_bus_tx(handle, tx, sizeof(tx), 10);
+    furi_hal_spi_release(handle);
+    if(!ok) FURI_LOG_E(TAG, "GDO1 config write failed");
 }
 
 void flex_sampler_free(FlexSampler* instance) {
@@ -568,6 +613,8 @@ void flex_sampler_start(FlexSampler* instance) {
     instance->paused = false;
     subghz_protocol_decoder_flex_reset_stats(instance->decoder);
     instance->decoder->protocol->decoder->reset(instance->decoder);
+    // Before the GPIOs: this takes the bus, which reconfigures the shared pin.
+    flex_sampler_set_gdo1(instance, CC1101IocfgRxHardData0);
     furi_hal_gpio_init(instance->data_msb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
     furi_hal_gpio_init(instance->data_lsb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
 
@@ -590,6 +637,10 @@ void flex_sampler_stop(FlexSampler* instance) {
     instance->samples = NULL;
     instance->head = 0;
     instance->tail = 0;
+
+    // Only once the sampling timer and thread are gone, so nothing is reading
+    // the pin while SPI takes it over.
+    flex_sampler_set_gdo1(instance, CC1101IocfgHighImpedance);
 }
 
 void flex_sampler_pause(FlexSampler* instance) {
