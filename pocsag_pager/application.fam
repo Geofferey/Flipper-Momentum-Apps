@@ -9,6 +9,16 @@ App(
     fap_icon="pocsag_pager_10px.png",
     fap_category="Sub-GHz",
     fap_icon_assets="images",
+    # The About text is read from /ext/pocsag/ABOUT.txt instead of living in
+    # .rodata, where it would occupy RAM for the whole session. Published next
+    # to the .fap so the installed copy matches the build.
+    fap_extbuild=(
+        ExtFile(
+            path="${EXT_APPS_WORK_DIR}/ABOUT.txt",
+            command="${PYTHON3} ${FAP_SRC_DIR}/tools/export_about.py "
+            "${FAP_SRC_DIR.abspath}/ABOUT.txt ${TARGET.abspath}",
+        ),
+    ),
     fap_author="@xMasterX & @Shmuma",
     fap_version="2.0",
     fap_description="Receive and transmit POCSAG and FLEX pager messages on CC1101 supported frequencies.",

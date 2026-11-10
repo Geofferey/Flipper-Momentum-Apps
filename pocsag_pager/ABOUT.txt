@@ -1,0 +1,39 @@
+Receive POCSAG and FLEX pager messages, or send an alphanumeric POCSAG page to your own node.
+Default frequency is set to
+DAPNET - 439987500
+
+Select POCSAG (POCSAG-W at 900 MHz) for POCSAG, FLEX for 2-level FLEX and a FLEX4 preset for 4-level. RSSI and hopping are disabled with FLEX4.
+
+Frequencies are in
+/pocsag/settings.txt
+Custom frequencies are at the end of the list.
+
+Supported protocols:
+POCSAG 512
+POCSAG 1200
+POCSAG 2400
+FLEX 1600/2
+FLEX 3200/2
+FLEX 3200/4
+FLEX 6400/4
+
+Developed by:
+@xMasterX & @Shmuma
+Protocol improvements by:
+@htotoo
+FLEX decoding by:
+@Geofferey
+Based on multimon-ng FLEX:
+Craig Shelley, Bruce Quinton,
+Jason Lingohr & contributors
+and Mayhem FLEX:
+@timelf123, @VasylSamoilov
+Icons by:
+@Svaarich
+
+Github:
+https://github.com/Geofferey/Flipper-Momentum-Apps/tree/flex/pocsag_pager
+
+Disclaimer
+Only receive traffic you are allowed to, and transmit only where you are licensed and authorized. Messages and logs can hold private info: do not share them.
+929-932 MHz is outside the CC1101's rated range: use at your own risk.
