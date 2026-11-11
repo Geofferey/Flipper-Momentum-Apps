@@ -1545,15 +1545,28 @@ static void flex_decode_phase(
             const uint32_t header = page_words[first];
             const bool continuation = (header >> 10) & 0x01U;
             const uint8_t fragment = (header >> 11) & 0x03U;
-            if(!alpha_checksum_valid) {
-                // The fragment controls share this failed checksum. Preserve
-                // the available text as a partial page, but do not let an
-                // untrusted C/F/N field create, alter, or finish a join.
-                if(continuation || fragment != 3U) {
-                    instance->stats.joined_checksum_rejected++;
-                }
+            const bool part = continuation || fragment != 3U;
+            /*
+             * A failed page checksum does not mean the fragment controls are
+             * wrong. Every word of a page reaching here passed BCH, since a
+             * repaired one was dropped above, so exactly one word was
+             * mis-corrected and the header is one word among many: refusing
+             * the join loses the whole message to protect fields that are
+             * probably intact. A long message is more likely to contain such
+             * a part the more parts it has, so this is where multi-part joins
+             * were being lost. The page is already suspect, so whatever is
+             * assembled stays marked partial, and the whole-message signature
+             * still has to reconcile.
+             *
+             * A soft-decided page is the exception: Chase picks the cheapest
+             * codeword, so there the controls themselves may be a guess, and
+             * a wrong slot or sequence position would corrupt a good assembly.
+             */
+            const bool controls_usable = alpha_checksum_valid || !instance->page_chase;
+            if(part && !controls_usable) {
+                instance->stats.joined_checksum_rejected++;
                 flex_emit_page(instance);
-            } else if(continuation || fragment != 3U) {
+            } else if(part) {
                 // Part of a longer message: join before emitting.
                 flex_fragment_add(
                     instance,
