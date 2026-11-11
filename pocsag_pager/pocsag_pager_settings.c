@@ -100,8 +100,6 @@ typedef enum {
     PCSGSetBoolInv,
     /** Signed, bounded symmetrically by +/- limit. */
     PCSGSetI32,
-    /** app->txrx->hopper_state, reached through a pointer rather than an offset. */
-    PCSGSetHopper,
     /** Validated against the radio device before it is accepted. */
     PCSGSetFreq,
     /** One of the three POCSAG rates. */
@@ -119,16 +117,17 @@ typedef struct {
 } PCSGSetting;
 
 #define PCSG_FIELD(member) offsetof(POCSAGPagerApp, member), sizeof(((POCSAGPagerApp*)0)->member)
-#define PCSG_NO_FIELD      0, 0
 
 /*
  * Every key after Frequency and Preset, in the one order both load and save
  * use. FlipperFormat scans forward from the current stream position, so a key
  * read out of order would silently drop itself and everything after it.
  * Append new keys at the end so older settings files keep the preceding ones.
+ *
+ * A key that is no longer read, as Hopping became, needs no placeholder: the
+ * forward scan steps over a line nobody asks for.
  */
 static const PCSGSetting pcsg_settings[] = {
-    {"Hopping", 0, PCSG_NO_FIELD, PCSGSetHopper},
     {"FlexBinary", 0, PCSG_FIELD(filter.show_binary), PCSGSetBool},
     {"CapcodeFilter", PCSGCapcodeFilterCount - 1, PCSG_FIELD(filter.capcode_filter), PCSGSetU32},
     {"CapcodeMin", PCSG_CAPCODE_MAX, PCSG_FIELD(filter.capcode_min), PCSGSetU32},
@@ -257,9 +256,6 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
             case PCSGSetBoolInv:
                 pcsg_setting_set(app, setting, value == 0);
                 break;
-            case PCSGSetHopper:
-                app->txrx->hopper_state = value ? PCSGHopperStateRunnig : PCSGHopperStateOFF;
-                break;
             case PCSGSetFreq:
                 if(subghz_devices_is_frequency_valid(app->txrx->radio_device, value)) {
                     pcsg_setting_set(app, setting, value);
@@ -310,9 +306,6 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
             }
 
             switch(setting->kind) {
-            case PCSGSetHopper:
-                value = app->txrx->hopper_state != PCSGHopperStateOFF;
-                break;
             case PCSGSetBoolInv:
                 value = !pcsg_setting_get(app, setting);
                 break;

@@ -44,12 +44,9 @@ struct POCSAGPagerTxRx {
     FlexSampler* flex_sampler;
     uint16_t idx_menu_chosen;
     PCSGTxRxState txrx_state;
-    PCSGHopperState hopper_state;
-    uint8_t hopper_timeout;
-    uint8_t hopper_idx_frequency;
     PCSGRxKeyState rx_key_state;
-    // Set when Config changes frequency, preset or hopping; otherwise the
-    // receiver keeps running when it is re-entered.
+    // Set when Config changes frequency or preset; otherwise the receiver
+    // keeps running when it is re-entered.
     bool rx_restart;
     // The speaker is held for the signal sound while receiving.
     bool speaker_on;
@@ -129,7 +126,6 @@ uint32_t pcsg_rx(POCSAGPagerApp* app, uint32_t frequency);
 void pcsg_idle(POCSAGPagerApp* app);
 void pcsg_rx_end(POCSAGPagerApp* app);
 void pcsg_sleep(POCSAGPagerApp* app);
-void pcsg_hopper_update(POCSAGPagerApp* app);
 int32_t pcsg_freqest_read_hz(POCSAGPagerApp* app);
 void pcsg_retune(POCSAGPagerApp* app);
 void pcsg_freq_auto_tick(POCSAGPagerApp* app, float rssi);

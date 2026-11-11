@@ -2,7 +2,7 @@ Receive POCSAG and FLEX pager messages, or send an alphanumeric POCSAG page to y
 Default frequency is set to
 DAPNET - 439987500
 
-Select POCSAG (POCSAG-W at 900 MHz) for POCSAG, FLEX for 2-level FLEX and a FLEX4 preset for 4-level. RSSI and hopping are disabled with FLEX4.
+Select POCSAG (POCSAG-W at 900 MHz) for POCSAG, FLEX for 2-level FLEX and a FLEX4 preset for 4-level. RSSI is disabled with FLEX4.
 
 Frequencies are in
 /pocsag/settings.txt

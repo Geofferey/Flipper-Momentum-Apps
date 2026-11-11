@@ -52,7 +52,7 @@ Built-in radio presets:
 
 The `FLEX4` presets read the CC1101 4-FSK hard decisions (RX_HARD_DATA) from
 the GDO0 and GDO1 pins, sampled at 25.6 kHz. GDO1 shares the SPI MISO line, so
-RSSI display and frequency hopping are off while they are active. External
+RSSI display is off while they are active. External
 modules must expose GDO1 on MISO, as standard CC1101 modules do.
 
 ## Using the app
@@ -79,7 +79,7 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   defaults to Off. This is intended for licensed operators testing their own
   pager infrastructure; the app does not bypass firmware region restrictions.
 - **Settings** is the same configuration, available before receiving:
-  frequency, hopping, modulation, per-kind FLEX page visibility, duplicates,
+  frequency, modulation, per-kind FLEX page visibility, duplicates,
   encrypted messages, logging, FLEX time sync, receive/decode LED indicators
   and a capcode filter. The receive activity blink can be disabled or set to
   cyan, blue, green, yellow, magenta, red or white; the successful-decode green

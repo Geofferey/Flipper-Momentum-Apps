@@ -2,7 +2,6 @@
 
 enum PCSGSettingIndex {
     PCSGSettingIndexFrequency,
-    PCSGSettingIndexHopping,
     PCSGSettingIndexModulation,
     PCSGSettingIndexShowAlpha,
     PCSGSettingIndexFlexDups,
@@ -152,16 +151,6 @@ static VariableItem* pcsg_config_row(POCSAGPagerApp* app, uint8_t index) {
     return variable_item_list_get(app->variable_item_list, index);
 }
 
-#define HOPPING_COUNT 2
-const char* const hopping_text[HOPPING_COUNT] = {
-    "OFF",
-    "ON",
-};
-const uint32_t hopping_value[HOPPING_COUNT] = {
-    PCSGHopperStateOFF,
-    PCSGHopperStateRunnig,
-};
-
 uint8_t pocsag_pager_scene_receiver_config_next_frequency(const uint32_t value, void* context) {
     furi_assert(context);
     POCSAGPagerApp* app = context;
@@ -192,43 +181,20 @@ uint8_t pocsag_pager_scene_receiver_config_next_preset(const char* preset_name, 
     return index;
 }
 
-uint8_t pocsag_pager_scene_receiver_config_hopper_value_index(
-    const uint32_t value,
-    const uint32_t values[],
-    uint8_t values_count,
-    void* context) {
-    furi_assert(context);
-    UNUSED(values_count);
-    POCSAGPagerApp* app = context;
-
-    if(value == values[0]) {
-        return 0;
-    } else {
-        VariableItem* frequency = pcsg_config_row(app, PCSGSettingIndexFrequency);
-        if(frequency) variable_item_set_current_value_text(frequency, " -----");
-        return 1;
-    }
-}
-
 static void pocsag_pager_scene_receiver_config_set_frequency(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
 
-    if(app->txrx->hopper_state == PCSGHopperStateOFF) {
-        char text_buf[10] = {0};
-        snprintf(
-            text_buf,
-            sizeof(text_buf),
-            "%lu.%02lu",
-            subghz_setting_get_frequency(app->setting, index) / 1000000,
-            (subghz_setting_get_frequency(app->setting, index) % 1000000) / 10000);
-        variable_item_set_current_value_text(item, text_buf);
-        app->txrx->preset->frequency = subghz_setting_get_frequency(app->setting, index);
-        app->txrx->rx_restart = true;
-    } else {
-        variable_item_set_current_value_index(
-            item, subghz_setting_get_frequency_default_index(app->setting));
-    }
+    char text_buf[10] = {0};
+    snprintf(
+        text_buf,
+        sizeof(text_buf),
+        "%lu.%02lu",
+        subghz_setting_get_frequency(app->setting, index) / 1000000,
+        (subghz_setting_get_frequency(app->setting, index) % 1000000) / 10000);
+    variable_item_set_current_value_text(item, text_buf);
+    app->txrx->preset->frequency = subghz_setting_get_frequency(app->setting, index);
+    app->txrx->rx_restart = true;
 }
 
 static void pocsag_pager_scene_receiver_config_set_preset(VariableItem* item) {
@@ -245,36 +211,6 @@ static void pocsag_pager_scene_receiver_config_set_preset(VariableItem* item) {
     app->txrx->rx_restart = true;
 }
 
-static void pocsag_pager_scene_receiver_config_set_hopping_running(VariableItem* item) {
-    POCSAGPagerApp* app = variable_item_get_context(item);
-    uint8_t index = variable_item_get_current_value_index(item);
-
-    variable_item_set_current_value_text(item, hopping_text[index]);
-    VariableItem* frequency = pcsg_config_row(app, PCSGSettingIndexFrequency);
-    if(hopping_value[index] == PCSGHopperStateOFF) {
-        char text_buf[10] = {0};
-        snprintf(
-            text_buf,
-            sizeof(text_buf),
-            "%lu.%02lu",
-            subghz_setting_get_default_frequency(app->setting) / 1000000,
-            (subghz_setting_get_default_frequency(app->setting) % 1000000) / 10000);
-        app->txrx->preset->frequency = subghz_setting_get_default_frequency(app->setting);
-        if(frequency) {
-            variable_item_set_current_value_text(frequency, text_buf);
-            variable_item_set_current_value_index(
-                frequency, subghz_setting_get_frequency_default_index(app->setting));
-        }
-    } else if(frequency) {
-        // Hopping chooses the channel, so the frequency row shows no value.
-        variable_item_set_current_value_text(frequency, " -----");
-        variable_item_set_current_value_index(
-            frequency, subghz_setting_get_frequency_default_index(app->setting));
-    }
-
-    app->txrx->hopper_state = hopping_value[index];
-    app->txrx->rx_restart = true;
-}
 
 static void pocsag_pager_scene_receiver_config_set_capcode_text(VariableItem* item, uint32_t value) {
     char text_buf[10] = {0};
@@ -580,17 +516,6 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
         subghz_setting_get_frequency(app->setting, value_index) / 1000000,
         (subghz_setting_get_frequency(app->setting, value_index) % 1000000) / 10000);
     variable_item_set_current_value_text(item, text_buf);
-
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Hopping:",
-        HOPPING_COUNT,
-        pocsag_pager_scene_receiver_config_set_hopping_running,
-        app);
-    value_index = pocsag_pager_scene_receiver_config_hopper_value_index(
-        app->txrx->hopper_state, hopping_value, HOPPING_COUNT, app);
-    variable_item_set_current_value_index(item, value_index);
-    variable_item_set_current_value_text(item, hopping_text[value_index]);
 
     item = variable_item_list_add(
         app->variable_item_list,

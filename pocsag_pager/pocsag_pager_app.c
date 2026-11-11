@@ -261,7 +261,6 @@ POCSAGPagerApp* pocsag_pager_app_alloc() {
 
     pcsg_preset_init(app, "POCSAG", 439987500, NULL, 0);
 
-    app->txrx->hopper_state = PCSGHopperStateOFF;
     // Every FLEX page kind is shown until the user hides one.
     app->filter.show_alpha = true;
     app->filter.show_numeric = true;

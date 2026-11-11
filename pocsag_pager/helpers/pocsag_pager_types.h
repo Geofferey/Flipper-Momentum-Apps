@@ -24,14 +24,6 @@ typedef enum {
     PCSGRxKeyStateAddKey,
 } PCSGRxKeyState;
 
-/** PCSGHopperState state */
-typedef enum {
-    PCSGHopperStateOFF,
-    PCSGHopperStateRunnig,
-    PCSGHopperStatePause,
-    PCSGHopperStateRSSITimeOut,
-} PCSGHopperState;
-
 /** PCSGLock */
 typedef enum {
     PCSGLockOff,
