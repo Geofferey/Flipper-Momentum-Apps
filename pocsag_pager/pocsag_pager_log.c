@@ -200,6 +200,26 @@ void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label) {
     furi_string_set_str(label, slot->label);
 }
 
+bool pcsg_log_get_address(
+    PCSGLog* instance,
+    uint16_t idx,
+    PCSGHistoryAddressType* type,
+    uint32_t* address) {
+    furi_assert(instance);
+    *type = PCSGHistoryAddressNone;
+    *address = 0;
+
+    // The header is at the front of the line, so the label prefix is enough.
+    char* line = pcsg_log_read_line(instance, idx, PCSG_LOG_LABEL_PREFIX - 1U);
+    bool result = false;
+    char* fields[PCSGLogFieldCount];
+    if(line && pcsg_history_split_line(line, fields)) {
+        result = pcsg_history_address_from_fields(fields, type, address);
+    }
+    free(line);
+    return result;
+}
+
 bool pcsg_log_get_entry(PCSGLog* instance, uint16_t idx, PCSGHistoryEntry* entry) {
     furi_assert(instance);
     furi_assert(entry);

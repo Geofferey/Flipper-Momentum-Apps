@@ -416,6 +416,26 @@ static bool pcsg_history_parse_address(const char* text, const char* tag, uint32
     return true;
 }
 
+bool pcsg_history_address_from_fields(
+    char* const fields[PCSGLogFieldCount],
+    PCSGHistoryAddressType* type,
+    uint32_t* address) {
+    *type = PCSGHistoryAddressNone;
+    *address = 0;
+
+    if(!strcmp(fields[PCSGLogFieldProtocol], "FLEX")) {
+        if(!pcsg_history_parse_address(fields[PCSGLogFieldRic], "CAP: ", address)) return false;
+        *type = PCSGHistoryAddressFlexCap;
+        return true;
+    }
+    if(!strcmp(fields[PCSGLogFieldProtocol], "POCSAG")) {
+        if(!pcsg_history_parse_address(fields[PCSGLogFieldRic], "RIC: ", address)) return false;
+        *type = PCSGHistoryAddressPocsagRic;
+        return true;
+    }
+    return false;
+}
+
 bool pcsg_history_get_address(
     PCSGHistory* instance,
     uint16_t idx,
@@ -442,15 +462,7 @@ bool pcsg_history_get_address(
 
         char* fields[PCSGLogFieldCount];
         if(read && pcsg_history_split_line(buffer, fields)) {
-            pcsg_block_generic_unescape(instance->ric, fields[PCSGLogFieldRic]);
-            const char* header = furi_string_get_cstr(instance->ric);
-            if(!strcmp(fields[PCSGLogFieldProtocol], "FLEX")) {
-                result = pcsg_history_parse_address(header, "CAP: ", address);
-                if(result) *type = PCSGHistoryAddressFlexCap;
-            } else if(!strcmp(fields[PCSGLogFieldProtocol], "POCSAG")) {
-                result = pcsg_history_parse_address(header, "RIC: ", address);
-                if(result) *type = PCSGHistoryAddressPocsagRic;
-            }
+            result = pcsg_history_address_from_fields(fields, type, address);
         }
     } while(false);
 

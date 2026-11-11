@@ -28,4 +28,7 @@ typedef enum {
     PCSGCustomEventViewInfoNextMessage,
     /** Scrolled back past its start: show the previous one, at its end. */
     PCSGCustomEventViewInfoPrevMessage,
+    /** Left/right: the next or previous message to the same address. */
+    PCSGCustomEventViewInfoNextAddress,
+    PCSGCustomEventViewInfoPrevAddress,
 } PCSGCustomEvent;

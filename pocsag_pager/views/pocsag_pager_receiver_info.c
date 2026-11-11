@@ -220,6 +220,17 @@ bool pcsg_view_receiver_info_input(InputEvent* event, void* context) {
         return false;
     }
 
+    // Left/right step through the messages sharing this one's address. The
+    // view holds no list, so the owning scene finds them.
+    if((event->key == InputKeyLeft || event->key == InputKeyRight) &&
+       event->type == InputTypeShort && pcsg_receiver_info->callback) {
+        pcsg_receiver_info->callback(
+            event->key == InputKeyRight ? PCSGCustomEventViewInfoNextAddress :
+                                          PCSGCustomEventViewInfoPrevAddress,
+            pcsg_receiver_info->context);
+        return true;
+    }
+
     if((event->key == InputKeyUp || event->key == InputKeyDown) &&
        (event->type == InputTypeShort || event->type == InputTypeRepeat)) {
         // A message already at its last line, or short enough to fit entirely,

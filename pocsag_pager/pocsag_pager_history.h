@@ -61,6 +61,17 @@ typedef enum {
     PCSGHistoryAddressPocsagRic,
 } PCSGHistoryAddressType;
 
+/**
+ * Read the address out of already-split log fields. The Ric field may still
+ * be escaped: escaping only rewrites backslash and the control characters, so
+ * the "CAP: " and "RIC: " tags and the digits after them are untouched.
+ * Returns false when the protocol carries no address this understands.
+ */
+bool pcsg_history_address_from_fields(
+    char* const fields[PCSGLogFieldCount],
+    PCSGHistoryAddressType* type,
+    uint32_t* address);
+
 /** History state add key */
 typedef enum {
     PCSGHistoryStateAddKeyUnknown,

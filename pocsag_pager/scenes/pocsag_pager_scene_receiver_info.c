@@ -54,6 +54,47 @@ static void pocsag_pager_scene_receiver_info_show(POCSAGPagerApp* app, bool at_e
     }
 }
 
+/*
+ * Find the nearest message sharing the open one's capcode or RIC. Each probe
+ * reads the log, and copies to one address normally arrive close together, so
+ * the search is bounded instead of walking a whole session: a match further
+ * away than this is treated as none.
+ */
+#define PCSG_INFO_ADDRESS_SCAN 256U
+
+static bool pocsag_pager_scene_receiver_info_find_address(
+    POCSAGPagerApp* app,
+    bool forward,
+    uint16_t* found) {
+    PCSGHistoryAddressType type;
+    uint32_t address;
+    if(!pcsg_history_get_address(
+           app->txrx->history, app->txrx->idx_menu_chosen, &type, &address)) {
+        return false;
+    }
+
+    const uint16_t count = pcsg_history_get_item(app->txrx->history);
+    uint16_t idx = app->txrx->idx_menu_chosen;
+    for(uint16_t step = 0; step < PCSG_INFO_ADDRESS_SCAN; step++) {
+        if(forward) {
+            if(idx + 1U >= count) return false;
+            idx++;
+        } else {
+            if(idx == 0U) return false;
+            idx--;
+        }
+
+        PCSGHistoryAddressType other_type;
+        uint32_t other_address;
+        if(pcsg_history_get_address(app->txrx->history, idx, &other_type, &other_address) &&
+           other_type == type && other_address == address) {
+            *found = idx;
+            return true;
+        }
+    }
+    return false;
+}
+
 void pocsag_pager_scene_receiver_info_on_enter(void* context) {
     POCSAGPagerApp* app = context;
 
@@ -81,6 +122,16 @@ bool pocsag_pager_scene_receiver_info_on_event(void* context, SceneManagerEvent 
             if(app->txrx->idx_menu_chosen) {
                 app->txrx->idx_menu_chosen--;
                 pocsag_pager_scene_receiver_info_show(app, true);
+            }
+            consumed = true;
+        } else if(
+            event.event == PCSGCustomEventViewInfoNextAddress ||
+            event.event == PCSGCustomEventViewInfoPrevAddress) {
+            uint16_t found;
+            if(pocsag_pager_scene_receiver_info_find_address(
+                   app, event.event == PCSGCustomEventViewInfoNextAddress, &found)) {
+                app->txrx->idx_menu_chosen = found;
+                pocsag_pager_scene_receiver_info_show(app, false);
             }
             consumed = true;
         }

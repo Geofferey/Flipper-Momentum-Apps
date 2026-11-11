@@ -31,3 +31,10 @@ void pcsg_log_get_label(PCSGLog* instance, uint16_t idx, FuriString* label);
 
 /** Escaped header/message for the info view; caller frees the returned entry. */
 bool pcsg_log_get_entry(PCSGLog* instance, uint16_t idx, PCSGHistoryEntry* entry);
+
+/** Capcode or RIC of a message, read from its header prefix alone. */
+bool pcsg_log_get_address(
+    PCSGLog* instance,
+    uint16_t idx,
+    PCSGHistoryAddressType* type,
+    uint32_t* address);

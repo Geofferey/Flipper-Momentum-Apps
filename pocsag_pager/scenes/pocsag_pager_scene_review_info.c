@@ -17,6 +17,39 @@ static void pocsag_pager_scene_review_info_show(POCSAGPagerApp* app, bool at_end
     }
 }
 
+// Bounded for the same reason as the live viewer: each probe reads the file.
+#define PCSG_REVIEW_ADDRESS_SCAN 256U
+
+static bool pocsag_pager_scene_review_info_find_address(
+    POCSAGPagerApp* app,
+    bool forward,
+    uint16_t* found) {
+    PCSGHistoryAddressType type;
+    uint32_t address;
+    if(!pcsg_log_get_address(app->log, app->review_idx, &type, &address)) return false;
+
+    const uint16_t count = pcsg_log_get_count(app->log);
+    uint16_t idx = app->review_idx;
+    for(uint16_t step = 0; step < PCSG_REVIEW_ADDRESS_SCAN; step++) {
+        if(forward) {
+            if(idx + 1U >= count) return false;
+            idx++;
+        } else {
+            if(idx == 0U) return false;
+            idx--;
+        }
+
+        PCSGHistoryAddressType other_type;
+        uint32_t other_address;
+        if(pcsg_log_get_address(app->log, idx, &other_type, &other_address) &&
+           other_type == type && other_address == address) {
+            *found = idx;
+            return true;
+        }
+    }
+    return false;
+}
+
 void pocsag_pager_scene_review_info_on_enter(void* context) {
     POCSAGPagerApp* app = context;
     pcsg_view_receiver_info_set_callback(
@@ -41,6 +74,16 @@ bool pocsag_pager_scene_review_info_on_event(void* context, SceneManagerEvent ev
         if(app->review_idx) {
             app->review_idx--;
             pocsag_pager_scene_review_info_show(app, true);
+        }
+        return true;
+    }
+    if(event.event == PCSGCustomEventViewInfoNextAddress ||
+       event.event == PCSGCustomEventViewInfoPrevAddress) {
+        uint16_t found;
+        if(pocsag_pager_scene_review_info_find_address(
+               app, event.event == PCSGCustomEventViewInfoNextAddress, &found)) {
+            app->review_idx = found;
+            pocsag_pager_scene_review_info_show(app, false);
         }
         return true;
     }
