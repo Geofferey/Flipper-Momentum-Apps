@@ -32,6 +32,7 @@ typedef enum {
     PCSGNumberFieldFreqPpm,
     /** Tuning frequency in Hz, checked against the radio before it is kept. */
     PCSGNumberFieldTxFrequency,
+    PCSGNumberFieldRxFrequency,
 } PCSGNumberField;
 
 /*

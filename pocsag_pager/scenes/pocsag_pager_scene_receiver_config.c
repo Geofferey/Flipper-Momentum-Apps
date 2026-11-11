@@ -174,19 +174,25 @@ uint8_t pocsag_pager_scene_receiver_config_next_preset(const char* preset_name, 
     return index;
 }
 
+/*
+ * Four decimals, not two: OK on this row types any frequency, and the
+ * channels themselves carry 100 Hz detail that two would hide.
+ */
+static void pcsg_config_show_frequency(VariableItem* item, uint32_t hz) {
+    char text_buf[12] = {0};
+    snprintf(text_buf, sizeof(text_buf), "%lu.%04lu", hz / 1000000U, (hz % 1000000U) / 100U);
+    variable_item_set_current_value_text(item, text_buf);
+}
+
+// Left and right step through the channel list; OK types a frequency, so
+// on_enter shows the stored value rather than calling this, which reads the
+// list index and would snap a typed one back onto the list.
 static void pocsag_pager_scene_receiver_config_set_frequency(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
 
-    char text_buf[10] = {0};
-    snprintf(
-        text_buf,
-        sizeof(text_buf),
-        "%lu.%02lu",
-        subghz_setting_get_frequency(app->setting, index) / 1000000,
-        (subghz_setting_get_frequency(app->setting, index) % 1000000) / 10000);
-    variable_item_set_current_value_text(item, text_buf);
     app->txrx->preset->frequency = subghz_setting_get_frequency(app->setting, index);
+    pcsg_config_show_frequency(item, app->txrx->preset->frequency);
     app->txrx->rx_restart = true;
 }
 
@@ -460,6 +466,9 @@ static void
     POCSAGPagerApp* app = context;
     if(index == PCSGSettingIndexLock) {
         view_dispatcher_send_custom_event(app->view_dispatcher, PCSGCustomEventSceneSettingLock);
+    } else if(index == PCSGSettingIndexFrequency) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, PCSGCustomEventSceneSettingFrequency);
     } else if(index == PCSGSettingIndexCapcodeMin) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, PCSGCustomEventSceneSettingCapcodeMin);
@@ -498,14 +507,7 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
     value_index =
         pocsag_pager_scene_receiver_config_next_frequency(app->txrx->preset->frequency, app);
     variable_item_set_current_value_index(item, value_index);
-    char text_buf[10] = {0};
-    snprintf(
-        text_buf,
-        sizeof(text_buf),
-        "%lu.%02lu",
-        subghz_setting_get_frequency(app->setting, value_index) / 1000000,
-        (subghz_setting_get_frequency(app->setting, value_index) % 1000000) / 10000);
-    variable_item_set_current_value_text(item, text_buf);
+    pcsg_config_show_frequency(item, app->txrx->preset->frequency);
 
     item = variable_item_list_add(
         app->variable_item_list,
@@ -602,6 +604,11 @@ bool pocsag_pager_scene_receiver_config_on_event(void* context, SceneManagerEven
         if(event.event == PCSGCustomEventSceneSettingLock) {
             app->lock = PCSGLockOn;
             scene_manager_previous_scene(app->scene_manager);
+            consumed = true;
+        } else if(event.event == PCSGCustomEventSceneSettingFrequency) {
+            scene_manager_set_scene_state(
+                app->scene_manager, POCSAGPagerSceneCapcodeInput, PCSGNumberFieldRxFrequency);
+            scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneCapcodeInput);
             consumed = true;
         } else if(
             event.event == PCSGCustomEventSceneSettingCapcodeMin ||
