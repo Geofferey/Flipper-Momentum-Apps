@@ -25,22 +25,6 @@
 #define PCSG_HISTORY_LABEL_CACHE_SIZE 4U
 #define PCSG_HISTORY_PREFIX_SIZE      256U
 
-/*
- * One index record per message admitted to the viewer. The address is kept
- * here, taken once when the message arrives, so looking one up or searching
- * for its copies reads the index and never the log: the index is fixed-size
- * records, where the log needs a seek, a read of the line and a parse per
- * entry. The index is rebuilt every session, so its layout is free to change.
- */
-typedef struct {
-    uint32_t offset;
-    uint16_t length;
-    uint8_t type;
-    // PCSGHistoryAddressType, or None when the protocol carries no address.
-    uint8_t address_type;
-    uint32_t address;
-} PCSGHistoryItem;
-
 // Index records read per seek while searching, 384 bytes of stack.
 #define PCSG_HISTORY_SCAN_ITEMS 32U
 

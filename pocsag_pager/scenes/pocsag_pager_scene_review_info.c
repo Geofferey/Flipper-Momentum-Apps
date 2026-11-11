@@ -18,12 +18,10 @@ static void pocsag_pager_scene_review_info_show(POCSAGPagerApp* app, bool at_end
 }
 
 /*
- * Unlike the live viewer, this is bounded. A session's index records carry
- * each message's address, so pcsg_history_find_address() searches the index;
- * a saved log's index holds only line offsets, and holding addresses for up
- * to PCSG_LOG_MAX_ENTRIES entries would cost more RAM than a read-only
- * viewer should. Each probe therefore reads one header prefix, and copies to
- * one address arrive close together, so a match further off than this is
+ * Bound for logs with no saved index: a session that kept one indexed every
+ * message it displayed, and that search covers the whole log. Without one
+ * each probe reads a header prefix, so the search is bounded instead; copies
+ * to one address arrive close together, and a match further off than this is
  * treated as none.
  */
 #define PCSG_REVIEW_ADDRESS_SCAN 256U
@@ -35,6 +33,11 @@ static bool pocsag_pager_scene_review_info_find_address(
     PCSGHistoryAddressType type;
     uint32_t address;
     if(!pcsg_log_get_address(app->log, app->review_idx, &type, &address)) return false;
+
+    if(pcsg_log_has_index(app->log)) {
+        return pcsg_log_find_address(
+            app->log, app->review_idx, forward, type, address, found);
+    }
 
     const uint16_t count = pcsg_log_get_count(app->log);
     uint16_t idx = app->review_idx;

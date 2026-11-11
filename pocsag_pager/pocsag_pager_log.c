@@ -35,6 +35,20 @@ struct PCSGLog {
     bool open;
     uint32_t file_size;
 
+    /*
+     * The <stamp>.idx the live viewer saved beside this log, when there is
+     * one. It carries each message's address against its byte offset, which
+     * is what lets a search for one address cover the whole log; without it
+     * the search falls back to reading header prefixes, bounded.
+     *
+     * It indexes only the messages that passed the filters while recording,
+     * so it is a subset of the lines here and is matched by offset rather
+     * than by position.
+     */
+    File* index_file;
+    bool index_open;
+    uint16_t index_count;
+
     uint32_t* blocks[PCSG_LOG_BLOCKS];
     // Ring position of index 0; non-zero only when the log was truncated.
     uint16_t first;
@@ -62,12 +76,14 @@ PCSGLog* pcsg_log_alloc(void) {
     PCSGLog* instance = calloc(1, sizeof(PCSGLog));
     instance->storage = furi_record_open(RECORD_STORAGE);
     instance->file = storage_file_alloc(instance->storage);
+    instance->index_file = storage_file_alloc(instance->storage);
     return instance;
 }
 
 void pcsg_log_free(PCSGLog* instance) {
     furi_assert(instance);
     pcsg_log_close(instance);
+    storage_file_free(instance->index_file);
     storage_file_free(instance->file);
     furi_record_close(RECORD_STORAGE);
     free(instance);
@@ -77,6 +93,9 @@ void pcsg_log_close(PCSGLog* instance) {
     furi_assert(instance);
     if(instance->open) storage_file_close(instance->file);
     instance->open = false;
+    if(instance->index_open) storage_file_close(instance->index_file);
+    instance->index_open = false;
+    instance->index_count = 0;
     for(size_t i = 0; i < PCSG_LOG_BLOCKS; i++) {
         free(instance->blocks[i]);
         instance->blocks[i] = NULL;
@@ -100,6 +119,67 @@ uint16_t pcsg_log_get_count(PCSGLog* instance) {
 bool pcsg_log_is_truncated(PCSGLog* instance) {
     furi_assert(instance);
     return instance->truncated;
+}
+
+bool pcsg_log_has_index(PCSGLog* instance) {
+    furi_assert(instance);
+    return instance->index_open && instance->index_count;
+}
+
+// A run of index records in one seek. Bounds-checked against index_count,
+// which pcsg_log_open_index() sets only once the file has been accepted.
+static bool pcsg_log_read_index(
+    PCSGLog* instance,
+    uint16_t idx,
+    PCSGHistoryItem* items,
+    uint16_t count) {
+    if(!instance->index_open || !count) return false;
+    if(instance->index_count && idx + count > instance->index_count) return false;
+    const uint32_t offset = (uint32_t)idx * sizeof(PCSGHistoryItem);
+    const size_t bytes = (size_t)count * sizeof(PCSGHistoryItem);
+    return storage_file_seek(instance->index_file, offset, true) &&
+           storage_file_read(instance->index_file, items, bytes) == bytes;
+}
+
+/*
+ * Open the <stamp>.idx beside <stamp>.txt, if the session that wrote the log
+ * kept one. Absent, unreadable or inconsistent with this log, the viewer
+ * simply works without it.
+ */
+static void pcsg_log_open_index(PCSGLog* instance, const char* path) {
+    FuriString* index_path = furi_string_alloc_set_str(path);
+    const size_t dot = furi_string_search_rchar(index_path, '.');
+    if(dot != FURI_STRING_FAILURE) furi_string_left(index_path, dot);
+    furi_string_cat_str(index_path, PCSG_HISTORY_INDEX_EXT);
+
+    do {
+        if(!storage_file_open(
+               instance->index_file,
+               furi_string_get_cstr(index_path),
+               FSAM_READ,
+               FSOM_OPEN_EXISTING)) {
+            break;
+        }
+        instance->index_open = true;
+
+        const uint64_t size = storage_file_size(instance->index_file);
+        const uint64_t records = size / sizeof(PCSGHistoryItem);
+        // Whole records only, and no more than the log could hold.
+        if(!records || size % sizeof(PCSGHistoryItem) || records > PCSG_LOG_MAX_ENTRIES) break;
+
+        // An index for a different log would point outside this one.
+        PCSGHistoryItem last;
+        if(!pcsg_log_read_index(instance, (uint16_t)records - 1U, &last, 1U)) break;
+        if(last.offset >= instance->file_size) break;
+
+        instance->index_count = (uint16_t)records;
+    } while(false);
+
+    if(instance->index_open && !instance->index_count) {
+        storage_file_close(instance->index_file);
+        instance->index_open = false;
+    }
+    furi_string_free(index_path);
 }
 
 bool pcsg_log_open(PCSGLog* instance, const char* path) {
@@ -149,7 +229,13 @@ bool pcsg_log_open(PCSGLog* instance, const char* path) {
     } else {
         instance->count = lines;
     }
-    FURI_LOG_I(TAG, "%s: %lu messages", path, lines);
+    pcsg_log_open_index(instance, path);
+    FURI_LOG_I(
+        TAG,
+        "%s: %lu messages, %u indexed",
+        path,
+        lines,
+        instance->index_open ? instance->index_count : 0U);
     return true;
 }
 
@@ -231,6 +317,95 @@ bool pcsg_log_get_address(
     if(!pcsg_history_split_line(buffer, fields)) return false;
     return pcsg_history_address_from_parts(
         fields[PCSGLogFieldProtocol], fields[PCSGLogFieldRic], type, address);
+}
+
+// Index records read per seek while searching, 384 bytes of stack.
+#define PCSG_LOG_SCAN_ITEMS 32U
+
+/*
+ * Number of index records whose offset is below `target`. Records ascend by
+ * offset, so this is a plain binary search and gives the scan its starting
+ * point whether or not `target` is itself indexed, which matters because a
+ * message filtered out while recording has no record.
+ */
+static uint16_t pcsg_log_index_lower_bound(PCSGLog* instance, uint32_t target) {
+    uint16_t low = 0;
+    uint16_t high = instance->index_count;
+    while(low < high) {
+        const uint16_t mid = low + (high - low) / 2U;
+        PCSGHistoryItem item;
+        if(!pcsg_log_read_index(instance, mid, &item, 1U)) break;
+        if(item.offset < target) low = mid + 1U;
+        else high = mid;
+    }
+    return low;
+}
+
+// Log entry starting at this byte offset. Offsets ascend with position here
+// too, including across the ring of a truncated log.
+static bool pcsg_log_index_of_offset(PCSGLog* instance, uint32_t offset, uint16_t* idx) {
+    uint16_t low = 0;
+    uint16_t high = instance->count;
+    while(low < high) {
+        const uint16_t mid = low + (high - low) / 2U;
+        const uint32_t probe = pcsg_log_offset(instance, mid);
+        if(probe == offset) {
+            *idx = mid;
+            return true;
+        }
+        if(probe < offset) low = mid + 1U;
+        else high = mid;
+    }
+    return false;
+}
+
+bool pcsg_log_find_address(
+    PCSGLog* instance,
+    uint16_t from,
+    bool forward,
+    PCSGHistoryAddressType type,
+    uint32_t address,
+    uint16_t* found) {
+    furi_assert(instance);
+    furi_assert(found);
+    if(!instance->open || !instance->index_open || type == PCSGHistoryAddressNone) return false;
+    if(from >= instance->count) return false;
+
+    const uint32_t from_offset = pcsg_log_offset(instance, from);
+    PCSGHistoryItem items[PCSG_LOG_SCAN_ITEMS];
+
+    if(forward) {
+        // First record past this entry, even if this entry has none itself.
+        uint16_t pos = pcsg_log_index_lower_bound(instance, from_offset + 1U);
+        while(pos < instance->index_count) {
+            const uint16_t batch =
+                MIN((uint16_t)PCSG_LOG_SCAN_ITEMS, (uint16_t)(instance->index_count - pos));
+            if(!pcsg_log_read_index(instance, pos, items, batch)) break;
+            for(uint16_t i = 0; i < batch; i++) {
+                if(items[i].address_type == type && items[i].address == address &&
+                   pcsg_log_index_of_offset(instance, items[i].offset, found)) {
+                    return true;
+                }
+            }
+            pos += batch;
+        }
+    } else {
+        uint16_t end = pcsg_log_index_lower_bound(instance, from_offset);
+        while(end) {
+            const uint16_t batch = MIN((uint16_t)PCSG_LOG_SCAN_ITEMS, end);
+            const uint16_t start = end - batch;
+            if(!pcsg_log_read_index(instance, start, items, batch)) break;
+            for(uint16_t i = batch; i; i--) {
+                const PCSGHistoryItem* item = &items[i - 1U];
+                if(item->address_type == type && item->address == address &&
+                   pcsg_log_index_of_offset(instance, item->offset, found)) {
+                    return true;
+                }
+            }
+            end = start;
+        }
+    }
+    return false;
 }
 
 bool pcsg_log_get_entry(PCSGLog* instance, uint16_t idx, PCSGHistoryEntry* entry) {

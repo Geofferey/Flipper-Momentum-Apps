@@ -38,3 +38,23 @@ bool pcsg_log_get_address(
     uint16_t idx,
     PCSGHistoryAddressType* type,
     uint32_t* address);
+
+/**
+ * Nearest message either side of `from` carrying the same address, searched
+ * through the saved <stamp>.idx and so covering the whole log. False when
+ * there is none, and also when the log has no usable index, which is the
+ * caller's signal to fall back to its own bounded search.
+ *
+ * The index covers only messages that passed the filters while recording, so
+ * one filtered out then is visible in the list but is never a destination.
+ */
+bool pcsg_log_find_address(
+    PCSGLog* instance,
+    uint16_t from,
+    bool forward,
+    PCSGHistoryAddressType type,
+    uint32_t address,
+    uint16_t* found);
+
+/** Whether a saved index was found and accepted for the open log. */
+bool pcsg_log_has_index(PCSGLog* instance);

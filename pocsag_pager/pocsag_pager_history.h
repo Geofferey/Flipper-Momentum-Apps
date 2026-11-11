@@ -81,6 +81,26 @@ bool pcsg_history_address_from_parts(
     PCSGHistoryAddressType* type,
     uint32_t* address);
 
+/*
+ * One index record per message admitted to the viewer, in the order they
+ * arrived, so offsets ascend with position. Taking the address once on
+ * arrival is what lets a reader look one up, or search for its copies,
+ * through fixed-size records instead of seeking, reading and parsing a log
+ * line per entry.
+ *
+ * This is the on-disk layout of a <stamp>.idx, read back by the saved-log
+ * viewer as well as written by the live one. A kept index belongs to the log
+ * of the same stamp and holds byte offsets into it.
+ */
+typedef struct {
+    uint32_t offset;
+    uint16_t length;
+    uint8_t type;
+    /** PCSGHistoryAddressType, or None when the protocol carries no address. */
+    uint8_t address_type;
+    uint32_t address;
+} PCSGHistoryItem;
+
 /** History state add key */
 typedef enum {
     PCSGHistoryStateAddKeyUnknown,
