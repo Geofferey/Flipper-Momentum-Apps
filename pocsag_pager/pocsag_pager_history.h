@@ -16,6 +16,14 @@
 /** Where receive sessions are logged, one file per session. */
 #define PCSG_HISTORY_LOG_DIR    EXT_PATH("pocsag/logs")
 #define PCSG_HISTORY_LOG_EXT    ".txt"
+/*
+ * A kept log's index is saved beside it under the same stamp, so the pair
+ * stays identifiable: <stamp>.txt and <stamp>.idx. The index holds each
+ * message's offset and address, which is what lets a reader search by
+ * address without reading the log itself. A temp session's index is
+ * discarded with the rest of it.
+ */
+#define PCSG_HISTORY_INDEX_EXT  ".idx"
 /** Single session file used instead in temp mode, outside the logs folder. */
 #define PCSG_HISTORY_TEMP_PATH  EXT_PATH("pocsag/.session.tmp")
 #define PCSG_HISTORY_LABEL_SIZE 40U

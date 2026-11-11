@@ -15,9 +15,11 @@
  *
  *   HH:MM:SS <TAB> frequency <TAB> protocol <TAB> header <TAB> message
  *
- * with the fields escaped by pcsg_block_generic_escape(). A separate hidden
- * index contains one compact record for each entry admitted to the viewer.
- * It is only needed during the live session and contains no message text.
+ * with the fields escaped by pcsg_block_generic_escape(). A separate index
+ * holds one compact record for each entry admitted to the viewer, carrying no
+ * message text. A kept session saves it beside the log under the same stamp,
+ * so a reader can search by address without reading the log; a temp session
+ * puts it at the hidden path below and discards it on close.
  */
 #define PCSG_HISTORY_INDEX_PATH       EXT_PATH("pocsag/.session.idx")
 #define PCSG_HISTORY_LABEL_CACHE_SIZE 4U
@@ -112,7 +114,14 @@ static void pcsg_history_close_log(PCSGHistory* instance) {
         storage_file_close(instance->index_file);
         instance->index_open = false;
     }
-    storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
+    /*
+     * A kept session's index stays beside its log; only a temp one is
+     * discarded. temp_mode still describes the session being closed here,
+     * because the receiver resets history before applying the new setting.
+     */
+    if(instance->temp_mode) {
+        storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
+    }
 }
 
 /*
@@ -143,17 +152,20 @@ static bool pcsg_history_open_log(PCSGHistory* instance, uint32_t frequency) {
     if(instance->file_open) return true;
 
     storage_simply_mkdir(instance->storage, EXT_PATH("pocsag"));
-    FuriString* path;
+    FuriString* path = furi_string_alloc();
+    FuriString* index_path = furi_string_alloc();
     if(instance->temp_mode) {
         // Wipe the previous session's file rather than only truncating it.
         pcsg_history_destroy_temp(instance->storage);
-        path = furi_string_alloc_set_str(PCSG_HISTORY_TEMP_PATH);
+        furi_string_set_str(path, PCSG_HISTORY_TEMP_PATH);
+        furi_string_set_str(index_path, PCSG_HISTORY_INDEX_PATH);
     } else {
-        // Session start time and frequency, e.g. 2026-10-25_04-48-13_929.6125.txt
+        // Session start time and frequency, e.g. 2026-10-25_04-48-13_929.6125
         DateTime datetime;
         furi_hal_rtc_get_datetime(&datetime);
-        path = furi_string_alloc_printf(
-            "%s/%04u-%02u-%02u_%02u-%02u-%02u_%lu.%04lu" PCSG_HISTORY_LOG_EXT,
+        furi_string_printf(
+            path,
+            "%s/%04u-%02u-%02u_%02u-%02u-%02u_%lu.%04lu",
             PCSG_HISTORY_LOG_DIR,
             datetime.year,
             datetime.month,
@@ -163,13 +175,20 @@ static bool pcsg_history_open_log(PCSGHistory* instance, uint32_t frequency) {
             datetime.second,
             frequency / 1000000U,
             (frequency % 1000000U) / 100U);
+        // Both names come from this one stamp, so they cannot diverge.
+        furi_string_set(index_path, path);
+        furi_string_cat_str(index_path, PCSG_HISTORY_INDEX_EXT);
+        furi_string_cat_str(path, PCSG_HISTORY_LOG_EXT);
         storage_simply_mkdir(instance->storage, PCSG_HISTORY_LOG_DIR);
     }
+
     instance->file_open = storage_file_open(
         instance->file, furi_string_get_cstr(path), FSAM_READ_WRITE, FSOM_CREATE_ALWAYS);
-    storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
     instance->index_open = storage_file_open(
-        instance->index_file, PCSG_HISTORY_INDEX_PATH, FSAM_READ_WRITE, FSOM_CREATE_ALWAYS);
+        instance->index_file,
+        furi_string_get_cstr(index_path),
+        FSAM_READ_WRITE,
+        FSOM_CREATE_ALWAYS);
     if(instance->file_open && instance->index_open) {
         instance->file_size = 0;
         FURI_LOG_I(TAG, "Logging to %s", furi_string_get_cstr(path));
@@ -179,8 +198,9 @@ static bool pcsg_history_open_log(PCSGHistory* instance, uint32_t frequency) {
         if(instance->index_open) storage_file_close(instance->index_file);
         instance->file_open = false;
         instance->index_open = false;
-        storage_simply_remove(instance->storage, PCSG_HISTORY_INDEX_PATH);
+        storage_simply_remove(instance->storage, furi_string_get_cstr(index_path));
     }
+    furi_string_free(index_path);
     furi_string_free(path);
     return instance->file_open && instance->index_open;
 }
