@@ -3,8 +3,20 @@
 // Number entry for the capcode and frame filters. The scene state selects
 // the field being edited.
 
+/*
+ * A frequency is the one field here that a range cannot validate: the radio
+ * decides, and a rejected value must leave the old one alone rather than be
+ * clamped into a band the hardware will not tune. Shared so that every
+ * frequency entry in the app asks the same question.
+ */
+static bool pocsag_pager_scene_capcode_input_is_frequency(uint32_t field) {
+    return field == PCSGNumberFieldTxFrequency;
+}
+
 static uint32_t* pocsag_pager_scene_capcode_input_field(POCSAGPagerApp* app) {
     switch(scene_manager_get_scene_state(app->scene_manager, POCSAGPagerSceneCapcodeInput)) {
+    case PCSGNumberFieldTxFrequency:
+        return &app->tx_config.frequency;
     case PCSGNumberFieldCapcodeMax:
         return &app->filter.capcode_max;
     case PCSGNumberFieldFrameMin:
@@ -25,7 +37,17 @@ static uint32_t* pocsag_pager_scene_capcode_input_field(POCSAGPagerApp* app) {
 static void pocsag_pager_scene_capcode_input_callback(void* context, int32_t number) {
     furi_assert(context);
     POCSAGPagerApp* app = context;
-    *pocsag_pager_scene_capcode_input_field(app) = number;
+    const uint32_t field =
+        scene_manager_get_scene_state(app->scene_manager, POCSAGPagerSceneCapcodeInput);
+
+    if(pocsag_pager_scene_capcode_input_is_frequency(field) &&
+       !subghz_devices_is_frequency_valid(app->txrx->radio_device, (uint32_t)number)) {
+        // Outside every band the radio will tune: keep what was there.
+        notification_message(app->notifications, &sequence_error);
+    } else {
+        *pocsag_pager_scene_capcode_input_field(app) = number;
+    }
+
     view_dispatcher_send_custom_event(app->view_dispatcher, PCSGCustomEventSceneCapcodeInputDone);
 }
 
@@ -44,6 +66,11 @@ void pocsag_pager_scene_capcode_input_on_enter(void* context) {
     int32_t min = 0;
     int32_t max = PCSG_CAPCODE_MAX;
     switch(field) {
+    case PCSGNumberFieldTxFrequency:
+        header = "TX frequency, Hz";
+        min = PCSG_FREQUENCY_MIN_HZ;
+        max = PCSG_FREQUENCY_MAX_HZ;
+        break;
     case PCSGNumberFieldFreqPpm:
         // Signed: + raises a low carrier, - lowers a high one.
         header = "ppm +/-";

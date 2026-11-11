@@ -30,7 +30,18 @@ typedef enum {
     PCSGNumberFieldRicMin,
     PCSGNumberFieldRicMax,
     PCSGNumberFieldFreqPpm,
+    /** Tuning frequency in Hz, checked against the radio before it is kept. */
+    PCSGNumberFieldTxFrequency,
 } PCSGNumberField;
+
+/*
+ * Range offered when typing a frequency. The CC1101 covers several separate
+ * bands, which one pair of bounds cannot express, so these only keep the
+ * keypad sane: what is actually allowed is decided by
+ * subghz_devices_is_frequency_valid() when the value is accepted.
+ */
+#define PCSG_FREQUENCY_MIN_HZ 300000000
+#define PCSG_FREQUENCY_MAX_HZ 950000000
 
 /** FLEX phase to show: all, or one of A-D. */
 typedef enum {

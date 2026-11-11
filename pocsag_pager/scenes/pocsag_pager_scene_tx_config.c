@@ -64,18 +64,20 @@ static void pocsag_pager_scene_tx_show_correction(VariableItem* item, int32_t co
     variable_item_set_current_value_text(item, text);
 }
 
+static void pocsag_pager_scene_tx_show_frequency(VariableItem* item, uint32_t hz) {
+    char text[12];
+    snprintf(text, sizeof(text), "%lu.%04lu", hz / 1000000U, (hz % 1000000U) / 100U);
+    variable_item_set_current_value_text(item, text);
+}
+
+// Left and right step through the preset channels; OK on the row types any
+// frequency, so on_enter must show the stored value rather than calling this,
+// which would snap a typed one back onto the list.
 static void pocsag_pager_scene_tx_set_frequency(VariableItem* item) {
     POCSAGPagerApp* app = variable_item_get_context(item);
     const uint8_t index = variable_item_get_current_value_index(item);
     app->tx_config.frequency = subghz_setting_get_frequency(app->setting, index);
-    char text[12];
-    snprintf(
-        text,
-        sizeof(text),
-        "%lu.%04lu",
-        app->tx_config.frequency / 1000000U,
-        (app->tx_config.frequency % 1000000U) / 100U);
-    variable_item_set_current_value_text(item, text);
+    pocsag_pager_scene_tx_show_frequency(item, app->tx_config.frequency);
 }
 
 // FLEX short capcodes occupy their own range, so the address has to be moved
@@ -204,7 +206,7 @@ void pocsag_pager_scene_tx_config_on_enter(void* context) {
         pocsag_pager_scene_tx_set_frequency,
         app);
     variable_item_set_current_value_index(item, pocsag_pager_scene_tx_frequency_index(app));
-    pocsag_pager_scene_tx_set_frequency(item);
+    pocsag_pager_scene_tx_show_frequency(item, app->tx_config.frequency);
 
     // Placeholders: show_protocol_options() below sets the label, choice count
     // and value of all three according to the protocol.
@@ -262,6 +264,12 @@ bool pocsag_pager_scene_tx_config_on_event(void* context, SceneManagerEvent even
     POCSAGPagerApp* app = context;
     if(event.type != SceneManagerEventTypeCustom) return false;
 
+    if(event.event == PCSGTxConfigFrequency) {
+        scene_manager_set_scene_state(
+            app->scene_manager, POCSAGPagerSceneCapcodeInput, PCSGNumberFieldTxFrequency);
+        scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneCapcodeInput);
+        return true;
+    }
     if(event.event == PCSGTxConfigRic) {
         scene_manager_next_scene(app->scene_manager, POCSAGPagerSceneTxRicInput);
         return true;
