@@ -260,17 +260,11 @@ bool pocsag_pager_scene_receiver_on_event(void* context, SceneManagerEvent event
         }
     } else if(event.type == SceneManagerEventTypeTick) {
         pcsg_time_sync(app);
-        const bool flex4 =
-            pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name));
-        if(!flex4) {
-            // FLEX4 needs uninterrupted access to both hard-decision GPIOs.
-            const float rssi = subghz_devices_get_rssi(app->txrx->radio_device);
-            pcsg_receiver_rssi(app->pcsg_receiver, rssi);
-            pcsg_freq_auto_tick(app, rssi);
-        } else {
-            // No RSSI to gate on here for the same reason; the FLEX4 path
-            // pauses sampling between frames to measure instead.
-            pcsg_freq_auto_tick(app, 0.0f);
+        // Reading RSSI needs SPI, and FLEX4 needs uninterrupted access to both
+        // hard-decision GPIOs, one of which shares the SPI MISO pin.
+        if(!pcsg_preset_is_flex4(furi_string_get_cstr(app->txrx->preset->name))) {
+            pcsg_receiver_rssi(
+                app->pcsg_receiver, subghz_devices_get_rssi(app->txrx->radio_device));
         }
 
         if(app->txrx->txrx_state == PCSGTxRxStateRx && app->filter.receive_led) {

@@ -30,18 +30,11 @@ enum PCSGSettingIndex {
     PCSGSettingIndexFrameFilter,
     PCSGSettingIndexFrameMin,
     PCSGSettingIndexFrameMax,
-    PCSGSettingIndexFreqMode,
     PCSGSettingIndexFreqCorr,
     PCSGSettingIndexRawCapture,
     PCSGSettingIndexStatsLog,
     PCSGSettingIndexWeakDecode,
     PCSGSettingIndexLock,
-};
-
-#define FREQ_MODE_COUNT 2
-const char* const freq_mode_text[FREQ_MODE_COUNT] = {
-    "Manual",
-    "Auto",
 };
 
 const char* const phase_filter_text[PCSGPhaseFilterCount] = {
@@ -373,9 +366,6 @@ static const PCSGConfigRow pcsg_config_rows[] = {
     [PCSGSettingIndexFrameFilter] =
         {"Frame Filter:", capcode_filter_text, PCSG_ROW(filter.frame_filter), 0,
          PCSGCapcodeFilterCount, PCSGRowEnum, PCSGSideFrameMax},
-    [PCSGSettingIndexFreqMode] =
-        {"Correct Mode:", freq_mode_text, PCSG_ROW(filter.freq_auto), 0, FREQ_MODE_COUNT,
-         PCSGRowBool, PCSGSideNone},
     // Debug: record the raw FLEX4 sample stream to SD for offline analysis.
     [PCSGSettingIndexRawCapture] =
         {"Raw Capture:", raw_capture_text, PCSG_ROW(filter.raw_capture), 0, RAW_CAPTURE_COUNT,
@@ -572,8 +562,6 @@ void pocsag_pager_scene_receiver_config_on_enter(void* context) {
 
     variable_item_list_add(app->variable_item_list, "Frame Max:", 1, NULL, app);
     pocsag_pager_scene_receiver_config_update_frame_max(app);
-
-    pcsg_config_row_add(app, PCSGSettingIndexFreqMode);
 
     item = variable_item_list_add(
         app->variable_item_list,

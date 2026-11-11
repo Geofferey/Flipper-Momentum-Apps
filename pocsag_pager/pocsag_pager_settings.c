@@ -149,7 +149,6 @@ static const PCSGSetting pcsg_settings[] = {
     {"TonePitch", PCSGTonePitchCount - 1, PCSG_FIELD(filter.tone_pitch), PCSGSetU32},
     {"ToneSpread", PCSGToneSpreadCount - 1, PCSG_FIELD(filter.tone_spread), PCSGSetU32},
     {"FreqCorrPpm", PCSG_FREQ_PPM_MAX, PCSG_FIELD(filter.freq_correction_ppm), PCSGSetI32},
-    {"FreqAuto", 0, PCSG_FIELD(filter.freq_auto), PCSGSetBool},
     {"RawCapture", 0, PCSG_FIELD(filter.raw_capture), PCSGSetBool},
     {"StatsLog", 0, PCSG_FIELD(filter.stats_log), PCSGSetBool},
     {"WeakDecode", 0, PCSG_FIELD(filter.weak_decode), PCSGSetBool},

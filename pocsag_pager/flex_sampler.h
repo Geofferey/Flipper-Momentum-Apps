@@ -13,16 +13,7 @@ FlexSampler* flex_sampler_alloc(
 void flex_sampler_free(FlexSampler* instance);
 void flex_sampler_start(FlexSampler* instance);
 void flex_sampler_stop(FlexSampler* instance);
-void flex_sampler_pause(FlexSampler* instance);
-void flex_sampler_resume(FlexSampler* instance);
 bool flex_sampler_is_running(const FlexSampler* instance);
-bool flex_sampler_is_paused(const FlexSampler* instance);
-
-/** True while the decoder is locked onto a frame (cached; reads no registers). */
-bool flex_sampler_is_locked(const FlexSampler* instance);
-
-/** Number of valid FLEX frames completed since the sampler was started. */
-uint32_t flex_sampler_completed_frames(const FlexSampler* instance);
 
 /** Clear cached timing with RX stopped before changing channel/session. */
 void flex_sampler_reset_frame_timing(FlexSampler* instance);

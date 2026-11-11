@@ -167,8 +167,6 @@ typedef struct {
     // Crystal offset compensation applied to both RX and TX tuning, in ppm.
     // One value works on every band; +ppm corrects a carrier that runs low.
     int32_t freq_correction_ppm;
-    // Auto-calibrate the ppm from the demodulator while receiving (RX only).
-    bool freq_auto;
     // Record the raw FLEX4 sample stream to SD (debug / offline analysis).
     bool raw_capture;
     // Write counter-only FLEX4 diagnostics to /ext/pocsag/stats.txt.

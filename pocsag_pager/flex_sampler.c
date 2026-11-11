@@ -120,7 +120,6 @@ struct FlexSampler {
     const GpioPin* data_msb;
     const GpioPin* data_lsb;
     volatile bool running;
-    volatile bool paused;
     volatile bool overrun;
     volatile uint16_t head;
     volatile uint16_t tail;
@@ -563,10 +562,11 @@ FlexSampler* flex_sampler_alloc(
  * relies on that, and only a full cc1101_reset() would bring it back, which
  * the teardown path never does.
  *
- * The sampler owns this rather than the preset, because pcsg_rx() restarts
- * receiving without reloading the preset (pcsg_retune() does exactly that
- * after auto-calibration), so a value that arrived only with the preset would
- * not survive a retune.
+ * The sampler owns this rather than leaving it to the preset, because
+ * pcsg_rx() can start receiving without reloading the preset: a value that
+ * arrived only with the preset would then not be set at all. Keeping the
+ * register with the code that needs the pin makes that independent of how
+ * the caller got here.
  *
  * Acquiring the bus also returns the MCU pin from the plain input the sampler
  * makes of it to SPI's alternate function, and releasing leaves it in the
@@ -611,7 +611,6 @@ void flex_sampler_start(FlexSampler* instance) {
     instance->transition_count = 0;
     instance->last_symbol = 0;
     instance->last_symbol_valid = false;
-    instance->paused = false;
     subghz_protocol_decoder_flex_reset_stats(instance->decoder);
     instance->decoder->protocol->decoder->reset(instance->decoder);
     // Before the GPIOs: this takes the bus, which reconfigures the shared pin.
@@ -628,8 +627,7 @@ void flex_sampler_stop(FlexSampler* instance) {
     furi_assert(instance);
     if(!instance->running) return;
 
-    if(!instance->paused) flex_sampler_timer_stop();
-    instance->paused = false;
+    flex_sampler_timer_stop();
     instance->running = false;
     furi_thread_join(instance->thread);
     furi_thread_free(instance->thread);
@@ -642,24 +640,6 @@ void flex_sampler_stop(FlexSampler* instance) {
     // Only once the sampling timer and thread are gone, so nothing is reading
     // the pin while SPI takes it over.
     flex_sampler_set_gdo1(instance, CC1101IocfgHighImpedance);
-}
-
-void flex_sampler_pause(FlexSampler* instance) {
-    furi_assert(instance);
-    furi_assert(instance->running);
-    furi_assert(!instance->paused);
-    flex_sampler_timer_stop();
-    instance->paused = true;
-}
-
-void flex_sampler_resume(FlexSampler* instance) {
-    furi_assert(instance);
-    furi_assert(instance->running);
-    furi_assert(instance->paused);
-    furi_hal_gpio_init(instance->data_msb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
-    furi_hal_gpio_init(instance->data_lsb, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
-    instance->paused = false;
-    flex_sampler_timer_start(instance);
 }
 
 void flex_sampler_set_sound(
@@ -727,24 +707,6 @@ bool flex_sampler_is_running(const FlexSampler* instance) {
     return instance->running;
 }
 
-bool flex_sampler_is_paused(const FlexSampler* instance) {
-    furi_assert(instance);
-    return instance->paused;
-}
-
-bool flex_sampler_is_locked(const FlexSampler* instance) {
-    furi_assert(instance);
-    // Cached by the sampler thread each pass; reading it costs no SPI, unlike
-    // asking the radio, so it is safe to poll while sampling.
-    return instance->running && instance->sound_gate;
-}
-
-uint32_t flex_sampler_completed_frames(const FlexSampler* instance) {
-    furi_assert(instance);
-    FlexDecoderStats stats;
-    subghz_protocol_decoder_flex_get_stats(instance->decoder, &stats);
-    return stats.frames_completed;
-}
 
 void flex_sampler_reset_frame_timing(FlexSampler* instance) {
     subghz_protocol_decoder_flex_reset_frame_timing(instance->decoder);

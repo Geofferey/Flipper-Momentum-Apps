@@ -28,9 +28,7 @@ Transmit only where you are licensed and authorised.
 
 ## Frequency accuracy
 
-- **Crystal correction in ppm**, applied to both RX and TX tuning, adjusted with left/right
-- **Automatic RX calibration** drives the correction from the demodulator's residual carrier offset, converges, then tracks slow drift
-- Works under FLEX4 too, which cannot read the offset while sampling, by pausing briefly after a completed frame
+- **Crystal correction in ppm**, applied to both RX and TX tuning, adjusted with left/right. One value works on every band; `+` corrects a carrier that runs low
 
 ## Filtering
 
