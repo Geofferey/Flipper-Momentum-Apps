@@ -62,13 +62,14 @@ typedef enum {
 } PCSGHistoryAddressType;
 
 /**
- * Read the address out of already-split log fields. The Ric field may still
- * be escaped: escaping only rewrites backslash and the control characters, so
- * the "CAP: " and "RIC: " tags and the digits after them are untouched.
- * Returns false when the protocol carries no address this understands.
+ * Read the address out of a log line's protocol and Ric fields. The Ric may
+ * still be escaped: escaping only rewrites backslash and the control
+ * characters, so the "CAP: " and "RIC: " tags and the digits after them are
+ * the same either way. False when the protocol carries no address.
  */
-bool pcsg_history_address_from_fields(
-    char* const fields[PCSGLogFieldCount],
+bool pcsg_history_address_from_parts(
+    const char* protocol,
+    const char* ric,
     PCSGHistoryAddressType* type,
     uint32_t* address);
 
@@ -166,3 +167,16 @@ bool pcsg_history_get_address(
     uint16_t idx,
     PCSGHistoryAddressType* type,
     uint32_t* address);
+
+/**
+ * Nearest message either side of `from` carrying the same address, searched
+ * through the index rather than the log, so the whole session is covered
+ * without a bound. False when there is none.
+ */
+bool pcsg_history_find_address(
+    PCSGHistory* instance,
+    uint16_t from,
+    bool forward,
+    PCSGHistoryAddressType type,
+    uint32_t address,
+    uint16_t* found);

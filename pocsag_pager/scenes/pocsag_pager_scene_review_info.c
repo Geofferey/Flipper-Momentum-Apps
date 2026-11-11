@@ -17,7 +17,15 @@ static void pocsag_pager_scene_review_info_show(POCSAGPagerApp* app, bool at_end
     }
 }
 
-// Bounded for the same reason as the live viewer: each probe reads the file.
+/*
+ * Unlike the live viewer, this is bounded. A session's index records carry
+ * each message's address, so pcsg_history_find_address() searches the index;
+ * a saved log's index holds only line offsets, and holding addresses for up
+ * to PCSG_LOG_MAX_ENTRIES entries would cost more RAM than a read-only
+ * viewer should. Each probe therefore reads one header prefix, and copies to
+ * one address arrive close together, so a match further off than this is
+ * treated as none.
+ */
 #define PCSG_REVIEW_ADDRESS_SCAN 256U
 
 static bool pocsag_pager_scene_review_info_find_address(

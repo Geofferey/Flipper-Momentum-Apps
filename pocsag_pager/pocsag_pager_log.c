@@ -9,6 +9,9 @@
 #define PCSG_LOG_READ_CHUNK  512U
 #define PCSG_LOG_LABEL_CACHE 4U
 #define PCSG_LOG_LABEL_PREFIX 256U
+// Enough of a line to reach past its header into the message field, which is
+// what pcsg_history_split_line() needs to accept it.
+#define PCSG_LOG_ADDRESS_PREFIX 256U
 
 // Offsets live in 2 KB blocks allocated as lines are found, so no single
 // allocation is large and short logs stay small.
@@ -208,16 +211,26 @@ bool pcsg_log_get_address(
     furi_assert(instance);
     *type = PCSGHistoryAddressNone;
     *address = 0;
+    if(!instance->open || idx >= instance->count) return false;
 
-    // The header is at the front of the line, so the label prefix is enough.
-    char* line = pcsg_log_read_line(instance, idx, PCSG_LOG_LABEL_PREFIX - 1U);
-    bool result = false;
+    /*
+     * The saved log's index holds only each line's offset: addresses would add
+     * four bytes an entry across up to PCSG_LOG_MAX_ENTRIES, which is more RAM
+     * than a read-only viewer should hold. So this reads the header instead,
+     * but only its prefix, into the stack, rather than taking the whole line
+     * onto the heap for every entry a search steps over.
+     */
+    char buffer[PCSG_LOG_ADDRESS_PREFIX];
+    if(!storage_file_seek(instance->file, pcsg_log_offset(instance, idx), true)) return false;
+    const size_t read = storage_file_read(instance->file, buffer, sizeof(buffer) - 1U);
+    buffer[read] = '\0';
+    char* newline = strchr(buffer, '\n');
+    if(newline) *newline = '\0';
+
     char* fields[PCSGLogFieldCount];
-    if(line && pcsg_history_split_line(line, fields)) {
-        result = pcsg_history_address_from_fields(fields, type, address);
-    }
-    free(line);
-    return result;
+    if(!pcsg_history_split_line(buffer, fields)) return false;
+    return pcsg_history_address_from_parts(
+        fields[PCSGLogFieldProtocol], fields[PCSGLogFieldRic], type, address);
 }
 
 bool pcsg_log_get_entry(PCSGLog* instance, uint16_t idx, PCSGHistoryEntry* entry) {

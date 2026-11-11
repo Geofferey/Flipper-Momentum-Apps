@@ -54,14 +54,7 @@ static void pocsag_pager_scene_receiver_info_show(POCSAGPagerApp* app, bool at_e
     }
 }
 
-/*
- * Find the nearest message sharing the open one's capcode or RIC. Each probe
- * reads the log, and copies to one address normally arrive close together, so
- * the search is bounded instead of walking a whole session: a match further
- * away than this is treated as none.
- */
-#define PCSG_INFO_ADDRESS_SCAN 256U
-
+// Nearest message to the same address, found through the session index.
 static bool pocsag_pager_scene_receiver_info_find_address(
     POCSAGPagerApp* app,
     bool forward,
@@ -72,27 +65,8 @@ static bool pocsag_pager_scene_receiver_info_find_address(
            app->txrx->history, app->txrx->idx_menu_chosen, &type, &address)) {
         return false;
     }
-
-    const uint16_t count = pcsg_history_get_item(app->txrx->history);
-    uint16_t idx = app->txrx->idx_menu_chosen;
-    for(uint16_t step = 0; step < PCSG_INFO_ADDRESS_SCAN; step++) {
-        if(forward) {
-            if(idx + 1U >= count) return false;
-            idx++;
-        } else {
-            if(idx == 0U) return false;
-            idx--;
-        }
-
-        PCSGHistoryAddressType other_type;
-        uint32_t other_address;
-        if(pcsg_history_get_address(app->txrx->history, idx, &other_type, &other_address) &&
-           other_type == type && other_address == address) {
-            *found = idx;
-            return true;
-        }
-    }
-    return false;
+    return pcsg_history_find_address(
+        app->txrx->history, app->txrx->idx_menu_chosen, forward, type, address, found);
 }
 
 void pocsag_pager_scene_receiver_info_on_enter(void* context) {

@@ -23,12 +23,24 @@
 #define PCSG_HISTORY_LABEL_CACHE_SIZE 4U
 #define PCSG_HISTORY_PREFIX_SIZE      256U
 
+/*
+ * One index record per message admitted to the viewer. The address is kept
+ * here, taken once when the message arrives, so looking one up or searching
+ * for its copies reads the index and never the log: the index is fixed-size
+ * records, where the log needs a seek, a read of the line and a parse per
+ * entry. The index is rebuilt every session, so its layout is free to change.
+ */
 typedef struct {
     uint32_t offset;
     uint16_t length;
     uint8_t type;
-    uint8_t reserved;
+    // PCSGHistoryAddressType, or None when the protocol carries no address.
+    uint8_t address_type;
+    uint32_t address;
 } PCSGHistoryItem;
+
+// Index records read per seek while searching, 384 bytes of stack.
+#define PCSG_HISTORY_SCAN_ITEMS 32U
 
 typedef struct {
     bool valid;
@@ -76,6 +88,19 @@ static bool pcsg_history_read_item(
     return storage_file_seek(instance->index_file, offset, true) &&
            storage_file_read(instance->index_file, item, sizeof(PCSGHistoryItem)) ==
                sizeof(PCSGHistoryItem);
+}
+
+// A run of index records in one seek, for searching.
+static bool pcsg_history_read_items(
+    PCSGHistory* instance,
+    uint16_t idx,
+    PCSGHistoryItem* items,
+    uint16_t count) {
+    if(!instance->index_open || !count || idx + count > instance->count) return false;
+    const uint32_t offset = (uint32_t)idx * sizeof(PCSGHistoryItem);
+    const size_t bytes = (size_t)count * sizeof(PCSGHistoryItem);
+    return storage_file_seek(instance->index_file, offset, true) &&
+           storage_file_read(instance->index_file, items, bytes) == bytes;
 }
 
 static void pcsg_history_close_log(PCSGHistory* instance) {
@@ -416,20 +441,21 @@ static bool pcsg_history_parse_address(const char* text, const char* tag, uint32
     return true;
 }
 
-bool pcsg_history_address_from_fields(
-    char* const fields[PCSGLogFieldCount],
+bool pcsg_history_address_from_parts(
+    const char* protocol,
+    const char* ric,
     PCSGHistoryAddressType* type,
     uint32_t* address) {
     *type = PCSGHistoryAddressNone;
     *address = 0;
 
-    if(!strcmp(fields[PCSGLogFieldProtocol], "FLEX")) {
-        if(!pcsg_history_parse_address(fields[PCSGLogFieldRic], "CAP: ", address)) return false;
+    if(!strcmp(protocol, "FLEX")) {
+        if(!pcsg_history_parse_address(ric, "CAP: ", address)) return false;
         *type = PCSGHistoryAddressFlexCap;
         return true;
     }
-    if(!strcmp(fields[PCSGLogFieldProtocol], "POCSAG")) {
-        if(!pcsg_history_parse_address(fields[PCSGLogFieldRic], "RIC: ", address)) return false;
+    if(!strcmp(protocol, "POCSAG")) {
+        if(!pcsg_history_parse_address(ric, "RIC: ", address)) return false;
         *type = PCSGHistoryAddressPocsagRic;
         return true;
     }
@@ -450,21 +476,66 @@ bool pcsg_history_get_address(
     bool result = false;
     furi_mutex_acquire(instance->mutex, FuriWaitForever);
 
-    do {
-        if(!instance->file_open) break;
-        PCSGHistoryItem item;
-        if(!pcsg_history_read_item(instance, idx, &item)) break;
-        char buffer[PCSG_HISTORY_PREFIX_SIZE];
-        const size_t length = MIN(item.length, sizeof(buffer) - 1U);
-        const bool read = storage_file_seek(instance->file, item.offset, true) &&
-                          storage_file_read(instance->file, buffer, length) == length;
-        buffer[read ? length : 0] = '\0';
+    PCSGHistoryItem item;
+    if(pcsg_history_read_item(instance, idx, &item) &&
+       item.address_type != PCSGHistoryAddressNone) {
+        *type = item.address_type;
+        *address = item.address;
+        result = true;
+    }
 
-        char* fields[PCSGLogFieldCount];
-        if(read && pcsg_history_split_line(buffer, fields)) {
-            result = pcsg_history_address_from_fields(fields, type, address);
+    furi_mutex_release(instance->mutex);
+    return result;
+}
+
+bool pcsg_history_find_address(
+    PCSGHistory* instance,
+    uint16_t from,
+    bool forward,
+    PCSGHistoryAddressType type,
+    uint32_t address,
+    uint16_t* found) {
+    furi_assert(instance);
+    furi_assert(found);
+    if(type == PCSGHistoryAddressNone) return false;
+
+    bool result = false;
+    furi_mutex_acquire(instance->mutex, FuriWaitForever);
+
+    PCSGHistoryItem items[PCSG_HISTORY_SCAN_ITEMS];
+    const uint16_t count = instance->count;
+    if(forward) {
+        uint16_t idx = from + 1U;
+        while(!result && idx < count) {
+            const uint16_t batch = MIN((uint16_t)PCSG_HISTORY_SCAN_ITEMS, (uint16_t)(count - idx));
+            if(!pcsg_history_read_items(instance, idx, items, batch)) break;
+            for(uint16_t i = 0; i < batch; i++) {
+                if(items[i].address_type == type && items[i].address == address) {
+                    *found = idx + i;
+                    result = true;
+                    break;
+                }
+            }
+            idx += batch;
         }
-    } while(false);
+    } else {
+        // Walk blocks backwards, and each block from its end, so the nearest
+        // match is the one reported.
+        uint16_t end = MIN(from, count);
+        while(!result && end) {
+            const uint16_t batch = MIN((uint16_t)PCSG_HISTORY_SCAN_ITEMS, end);
+            const uint16_t start = end - batch;
+            if(!pcsg_history_read_items(instance, start, items, batch)) break;
+            for(uint16_t i = batch; i; i--) {
+                if(items[i - 1U].address_type == type && items[i - 1U].address == address) {
+                    *found = start + i - 1U;
+                    result = true;
+                    break;
+                }
+            }
+            end = start;
+        }
+    }
 
     furi_mutex_release(instance->mutex);
     return result;
@@ -543,11 +614,21 @@ PCSGHistoryStateAddKey
             break;
         }
 
+        // Taken once, here, so no later lookup or search has to read the log.
+        PCSGHistoryAddressType address_type;
+        uint32_t address;
+        pcsg_history_address_from_parts(
+            furi_string_get_cstr(instance->protocol),
+            furi_string_get_cstr(instance->ric),
+            &address_type,
+            &address);
+
         PCSGHistoryItem item = {
             .offset = instance->file_size - (length + 1U),
             .length = length,
             .type = decoder_base->protocol->type,
-            .reserved = 0,
+            .address_type = (uint8_t)address_type,
+            .address = address,
         };
         const uint32_t index_offset = (uint32_t)instance->count * sizeof(PCSGHistoryItem);
         const bool indexed = storage_file_seek(instance->index_file, index_offset, true) &&
