@@ -11,7 +11,7 @@ typedef struct FlexTxEncoder FlexTxEncoder;
 FlexTxEncoder* flex_tx_encoder_alloc(void);
 void flex_tx_encoder_free(FlexTxEncoder* encoder);
 
-/** Build two complete 1600/2FSK FLEX frames for a short-address alpha page. */
+/** Build one complete 1600/2FSK FLEX frame for a short-address alpha page. */
 bool flex_tx_encoder_prepare(FlexTxEncoder* encoder, const PocsagTxConfig* config);
 
 /** Callback consumed by the Sub-GHz asynchronous transmitter. */

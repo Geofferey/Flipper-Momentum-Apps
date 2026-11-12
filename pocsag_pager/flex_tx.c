@@ -6,7 +6,19 @@
 #define FLEX_TX_BCH_POLYNOMIAL 0x769U
 #define FLEX_TX_DATA_MASK      0x1FFFFFU
 #define FLEX_TX_PHASE_WORDS    88U
-#define FLEX_TX_ERS_CYCLES     8U
+/*
+ * Acquisition runway ahead of the frame, in 12-byte cycles of alternating
+ * bits and the ERS code. At FLEX_TX_BAUD each cycle is 96 bits, so this is
+ * 1.44 s, and a transmission is 667 bytes or about 3.3 s in all.
+ *
+ * A receiver on a live FLEX channel is already locked to the network's clock
+ * and needs almost none of this; one coming cold to a single transmission has
+ * to recover the bit clock from scratch, and since the page is now sent once
+ * there is no second burst to fall back on. Still shorter overall than the
+ * two bursts and two frames this replaced. Lower it if the airtime matters
+ * more than the margin.
+ */
+#define FLEX_TX_ERS_CYCLES     24U
 #define FLEX_TX_FRAME_BYTES    379U
 #define FLEX_TX_ERS_BYTES      (FLEX_TX_ERS_CYCLES * 12U)
 #define FLEX_TX_BUFFER_BYTES   (FLEX_TX_ERS_BYTES + FLEX_TX_FRAME_BYTES)
