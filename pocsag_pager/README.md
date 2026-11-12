@@ -73,7 +73,7 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   512/1200/2400 baud. FLEX transmission currently supports 1600/2FSK and short
   capcodes 1-1933312; the CC1101 asynchronous data input cannot directly emit
   the four frequency levels required by FLEX 3200/4FSK or 6400/4FSK. FLEX sends
-  acquisition bursts followed by a new page and a retransmitted copy. Use
+  one acquisition burst and one page, with the retrieval flag set. Use
   Standard polarity unless the target requires an inverted signal. Optional TX
   correction offsets the carrier from -10.0 to +10.0 kHz in 0.5 kHz steps and
   defaults to Off. This is intended for licensed operators testing their own

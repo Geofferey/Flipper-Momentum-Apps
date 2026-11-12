@@ -9,8 +9,7 @@
 #define FLEX_TX_ERS_CYCLES     8U
 #define FLEX_TX_FRAME_BYTES    379U
 #define FLEX_TX_ERS_BYTES      (FLEX_TX_ERS_CYCLES * 12U)
-#define FLEX_TX_COPY_BYTES     (FLEX_TX_ERS_BYTES + FLEX_TX_FRAME_BYTES)
-#define FLEX_TX_BUFFER_BYTES   (2U * FLEX_TX_COPY_BYTES)
+#define FLEX_TX_BUFFER_BYTES   (FLEX_TX_ERS_BYTES + FLEX_TX_FRAME_BYTES)
 
 struct FlexTxEncoder {
     uint8_t bytes[FLEX_TX_BUFFER_BYTES];
@@ -232,11 +231,16 @@ bool flex_tx_encoder_prepare(FlexTxEncoder* encoder, const PocsagTxConfig* confi
         (datetime.second + datetime.minute * 7U + datetime.hour) & 0x3FU;
     if(message_number == 0U) message_number = 1U;
 
+    /*
+     * One acquisition burst and one frame. The page carries the retrieval
+     * flag set, marking it as the original delivery rather than a repeat,
+     * which is what makes a single transmission a complete message: networks
+     * send a page again for reliability, and the flag is how a receiver tells
+     * a repeat apart, so repeating is not required of a sender.
+     */
     uint8_t* output = encoder->bytes;
     flex_tx_write_ers(&output);
     flex_tx_write_frame(&output, config, cycle, frame, message_number, true);
-    flex_tx_write_ers(&output);
-    flex_tx_write_frame(&output, config, cycle, frame, message_number, false);
     encoder->byte_count = output - encoder->bytes;
     furi_check(encoder->byte_count == sizeof(encoder->bytes));
 
