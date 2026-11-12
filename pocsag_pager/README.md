@@ -75,7 +75,7 @@ modules must expose GDO1 on MISO, as standard CC1101 modules do.
   the four frequency levels required by FLEX 3200/4FSK or 6400/4FSK. FLEX sends
   one acquisition burst and one page, with the retrieval flag set. Use
   Standard polarity unless the target requires an inverted signal. Optional TX
-  correction offsets the carrier from -10.0 to +10.0 kHz in 0.5 kHz steps and
+  correction offsets the carrier from -15.0 to +15.0 kHz in 0.5 kHz steps and
   defaults to Off. This is intended for licensed operators testing their own
   pager infrastructure; the app does not bypass firmware region restrictions.
 - **Settings** is the same configuration, available before receiving:

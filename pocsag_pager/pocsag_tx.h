@@ -7,8 +7,16 @@
 
 #define PCSG_TX_MAX_MESSAGE_LENGTH 80U
 #define PCSG_TX_RIC_MAX            0x1FFFFFU
-#define PCSG_TX_CORRECTION_MIN_HZ   (-10000)
-#define PCSG_TX_CORRECTION_MAX_HZ   10000
+/*
+ * Per-shot carrier nudge. Wide enough to cover a crystal error at the top of
+ * the range: about 14 ppm reaches 13 kHz at 930 MHz, where the old 10 kHz
+ * limit fell short. Positive raises the carrier, so a radio transmitting low
+ * needs a positive value; pcsg_tx_start() adds this to the requested
+ * frequency. Unlike the ppm setting this is a fixed number of hertz, so it
+ * stops being right as soon as the band changes.
+ */
+#define PCSG_TX_CORRECTION_MIN_HZ   (-15000)
+#define PCSG_TX_CORRECTION_MAX_HZ   15000
 #define PCSG_TX_CORRECTION_STEP_HZ  500
 
 typedef enum {

@@ -12,7 +12,7 @@ Send to your own node, from **Transmit** in the main menu.
 
 - **POCSAG** alphanumeric at 512 / 1200 / 2400 baud, function bits 0–3, normal or inverted polarity
 - **FLEX** alphanumeric at 1600/2FSK
-- Per-shot TX frequency correction, ±10 kHz in 0.5 kHz steps
+- Per-shot TX frequency correction, ±15 kHz in 0.5 kHz steps
 - A review screen before anything goes out
 
 Transmit only where you are licensed and authorised.
