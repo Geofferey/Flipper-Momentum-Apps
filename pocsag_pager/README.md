@@ -118,8 +118,8 @@ Full-time setting requires the network to broadcast both the hour and the
 standard/daylight flag; it does not set the date or a system timezone.
 
 Receiver settings and the transmitter protocol, frequency, address, function,
-baud, polarity and correction are saved on a clean app exit. Message text is
-deliberately not saved.
+baud, polarity, correction and message text are saved on a clean app exit.
+The message is stored in plain text in that file, like the rest of it.
 
 Reception and error correction:
 

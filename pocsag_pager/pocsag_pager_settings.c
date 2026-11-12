@@ -269,6 +269,18 @@ void pcsg_settings_load(POCSAGPagerApp* app) {
                 break;
             }
         }
+
+        // Last, after the table, because a key an older file lacks ends every
+        // read behind it. Too long for the field means a file not written by
+        // this build, so the default empty message stands.
+        if(flipper_format_read_string(file, "TxMessage", text) &&
+           furi_string_size(text) <= PCSG_TX_MAX_MESSAGE_LENGTH) {
+            strncpy(
+                app->tx_config.message,
+                furi_string_get_cstr(text),
+                sizeof(app->tx_config.message) - 1U);
+            app->tx_config.message[sizeof(app->tx_config.message) - 1U] = '\0';
+        }
     } while(false);
 
     furi_string_free(text);
@@ -315,6 +327,10 @@ void pcsg_settings_save(POCSAGPagerApp* app) {
             written = flipper_format_write_uint32(file, setting->key, &value, 1);
         }
         if(!written) break;
+
+        // Written every time, including empty, so clearing the message clears
+        // what is stored rather than leaving the previous one behind.
+        if(!flipper_format_write_string_cstr(file, "TxMessage", app->tx_config.message)) break;
         saved = true;
     } while(false);
 
